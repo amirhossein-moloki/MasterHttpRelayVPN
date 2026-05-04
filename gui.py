@@ -98,7 +98,7 @@ class ModernUI(QMainWindow):
         # Sidebar
         self.sidebar = QWidget()
         self.sidebar.setFixedWidth(200)
-        self.sidebar.setStyleSheet("background-color: #2c3e50; color: white;")
+        self.sidebar.setStyleSheet("background-color: #1a1a1a; color: white; border-right: 1px solid #333;")
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(10, 20, 10, 20)
 
@@ -111,9 +111,9 @@ class ModernUI(QMainWindow):
         self.nav_list = QListWidget()
         self.nav_list.setStyleSheet("""
             QListWidget { border: none; background-color: transparent; outline: none; }
-            QListWidget::item { padding: 12px; border-radius: 5px; margin-bottom: 5px; color: #ecf0f1; }
-            QListWidget::item:selected { background-color: #34495e; color: #3498db; font-weight: bold; }
-            QListWidget::item:hover { background-color: #34495e; }
+            QListWidget::item { padding: 12px; border-radius: 5px; margin-bottom: 5px; color: #b0b0b0; }
+            QListWidget::item:selected { background-color: #333333; color: #3498db; font-weight: bold; }
+            QListWidget::item:hover { background-color: #252525; }
         """)
 
         items = [
@@ -142,7 +142,7 @@ class ModernUI(QMainWindow):
 
         # Content Area
         self.content_stack = QStackedWidget()
-        self.content_stack.setStyleSheet("background-color: #f5f6fa;")
+        self.content_stack.setStyleSheet("background-color: #121212; color: #e0e0e0;")
 
         self.dashboard_page = self._create_dashboard_page()
         self.settings_page = self._create_settings_page()
@@ -164,11 +164,12 @@ class ModernUI(QMainWindow):
 
         header = QLabel("Dashboard")
         header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        header.setStyleSheet("color: white;")
         layout.addWidget(header)
 
         # Status Card
         status_card = QFrame()
-        status_card.setStyleSheet("background-color: white; border-radius: 10px; border: 1px solid #dcdde1;")
+        status_card.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
         status_layout = QHBoxLayout(status_card)
         status_layout.setContentsMargins(20, 20, 20, 20)
 
@@ -182,7 +183,7 @@ class ModernUI(QMainWindow):
         status_text_layout.addWidget(self.status_label)
 
         self.status_detail = QLabel("Ready to start")
-        self.status_detail.setStyleSheet("color: #7f8c8d;")
+        self.status_detail.setStyleSheet("color: #b0b0b0;")
         status_text_layout.addWidget(self.status_detail)
         status_layout.addLayout(status_text_layout)
 
@@ -201,7 +202,7 @@ class ModernUI(QMainWindow):
 
         # Quota Card
         quota_card = QFrame()
-        quota_card.setStyleSheet("background-color: white; border-radius: 10px; border: 1px solid #dcdde1;")
+        quota_card.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
         quota_layout = QVBoxLayout(quota_card)
         quota_layout.setContentsMargins(20, 20, 20, 20)
 
@@ -219,13 +220,13 @@ class ModernUI(QMainWindow):
         self.quota_progress.setValue(0)
         self.quota_progress.setTextVisible(False)
         self.quota_progress.setStyleSheet("""
-            QProgressBar { height: 10px; border-radius: 5px; background-color: #f1f2f6; }
+            QProgressBar { height: 10px; border-radius: 5px; background-color: #333333; }
             QProgressBar::chunk { background-color: #3498db; border-radius: 5px; }
         """)
         quota_layout.addWidget(self.quota_progress)
 
         self.quota_hint = QLabel("Resets daily at 10:30 AM")
-        self.quota_hint.setStyleSheet("color: #95a5a6; font-size: 10px;")
+        self.quota_hint.setStyleSheet("color: #7f8c8d; font-size: 10px;")
         quota_layout.addWidget(self.quota_hint)
 
         layout.addWidget(quota_card)
@@ -235,12 +236,13 @@ class ModernUI(QMainWindow):
 
         def create_stat_box(title, value):
             box = QFrame()
-            box.setStyleSheet("background-color: white; border-radius: 10px; border: 1px solid #dcdde1;")
+            box.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
             blayout = QVBoxLayout(box)
             tlabel = QLabel(title)
-            tlabel.setStyleSheet("color: #7f8c8d; font-size: 12px;")
+            tlabel.setStyleSheet("color: #b0b0b0; font-size: 12px;")
             vlabel = QLabel(value)
             vlabel.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+            vlabel.setStyleSheet("color: white;")
             blayout.addWidget(tlabel)
             blayout.addWidget(vlabel)
             return box, vlabel
@@ -264,36 +266,64 @@ class ModernUI(QMainWindow):
 
         header = QLabel("Settings")
         header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        header.setStyleSheet("color: white;")
         layout.addWidget(header)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background-color: transparent;")
         scroll_content = QWidget()
+        scroll_content.setStyleSheet("background-color: transparent;")
         form_layout = QFormLayout(scroll_content)
         form_layout.setSpacing(15)
+
+        # Styles for Inputs
+        input_style = """
+            QLineEdit {
+                background-color: #1e1e1e;
+                color: #e0e0e0;
+                border: 1px solid #333;
+                padding: 8px;
+                border-radius: 5px;
+            }
+            QCheckBox { color: #e0e0e0; }
+        """
 
         # Config Fields
         self.edit_script_id = QLineEdit(self.config.get("script_id", ""))
         self.edit_script_id.setPlaceholderText("Apps Script Deployment ID")
-        form_layout.addRow("Deployment ID:", self.edit_script_id)
+        self.edit_script_id.setStyleSheet(input_style)
+
+        label_style = "color: #b0b0b0;"
+        def add_form_row(label_text, widget):
+            lbl = QLabel(label_text)
+            lbl.setStyleSheet(label_style)
+            form_layout.addRow(lbl, widget)
+
+        add_form_row("Deployment ID:", self.edit_script_id)
 
         self.edit_auth_key = QLineEdit(self.config.get("auth_key", ""))
         self.edit_auth_key.setEchoMode(QLineEdit.EchoMode.Password)
-        form_layout.addRow("Auth Key:", self.edit_auth_key)
+        self.edit_auth_key.setStyleSheet(input_style)
+        add_form_row("Auth Key:", self.edit_auth_key)
 
         self.edit_google_ip = QLineEdit(self.config.get("google_ip", "216.239.38.120"))
-        form_layout.addRow("Google IP:", self.edit_google_ip)
+        self.edit_google_ip.setStyleSheet(input_style)
+        add_form_row("Google IP:", self.edit_google_ip)
 
         self.edit_listen_port = QLineEdit(str(self.config.get("listen_port", 8085)))
-        form_layout.addRow("HTTP Port:", self.edit_listen_port)
+        self.edit_listen_port.setStyleSheet(input_style)
+        add_form_row("HTTP Port:", self.edit_listen_port)
 
         self.edit_socks_port = QLineEdit(str(self.config.get("socks5_port", 1080)))
-        form_layout.addRow("SOCKS5 Port:", self.edit_socks_port)
+        self.edit_socks_port.setStyleSheet(input_style)
+        add_form_row("SOCKS5 Port:", self.edit_socks_port)
 
         self.check_lan = QCheckBox("Enable LAN Sharing")
         self.check_lan.setChecked(self.config.get("lan_sharing", False))
-        form_layout.addRow("", self.check_lan)
+        self.check_lan.setStyleSheet(input_style)
+        add_form_row("", self.check_lan)
 
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
@@ -314,10 +344,15 @@ class ModernUI(QMainWindow):
         header = QHBoxLayout()
         header_text = QLabel("System Logs")
         header_text.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        header_text.setStyleSheet("color: white;")
         header.addWidget(header_text)
         header.addStretch()
 
         btn_clear = QPushButton("Clear")
+        btn_clear.setStyleSheet("""
+            QPushButton { background-color: #333; color: white; border-radius: 5px; padding: 5px 15px; }
+            QPushButton:hover { background-color: #444; }
+        """)
         btn_clear.clicked.connect(lambda: self.log_view.clear())
         header.addWidget(btn_clear)
         layout.addLayout(header)
@@ -338,15 +373,18 @@ class ModernUI(QMainWindow):
 
         header = QLabel("Google IP Scanner")
         header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        header.setStyleSheet("color: white;")
         layout.addWidget(header)
 
         desc = QLabel("Find the fastest reachable Google frontend IP for your connection.")
-        desc.setStyleSheet("color: #7f8c8d;")
+        desc.setStyleSheet("color: #b0b0b0;")
         layout.addWidget(desc)
 
         self.scanner_results = QTextEdit()
         self.scanner_results.setReadOnly(True)
-        self.scanner_results.setStyleSheet("background-color: white; border: 1px solid #dcdde1; border-radius: 5px;")
+        self.scanner_results.setStyleSheet("""
+            QTextEdit { background-color: #1e272e; color: #dcdde1; font-family: 'Consolas', monospace; border-radius: 5px; border: 1px solid #333; }
+        """)
         layout.addWidget(self.scanner_results)
 
         self.scan_btn = QPushButton("Start Scan")
@@ -402,11 +440,11 @@ class ModernUI(QMainWindow):
             self.quota_label.setText(f"{usage['count']} / {usage['limit']}")
             self.quota_progress.setValue(usage['count'])
             if usage['percent'] > 90:
-                self.quota_progress.setStyleSheet("QProgressBar::chunk { background-color: #e74c3c; }")
+                self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #e74c3c; }")
             elif usage['percent'] > 70:
-                self.quota_progress.setStyleSheet("QProgressBar::chunk { background-color: #f1c40f; }")
+                self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #f1c40f; }")
             else:
-                self.quota_progress.setStyleSheet("QProgressBar::chunk { background-color: #3498db; }")
+                self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #3498db; }")
 
         stats = self.proxy_service.get_stats()
         if stats:
@@ -467,9 +505,21 @@ def main():
     app.setStyle("Fusion")
 
     # Dark mode-ish palette for Fusion
-    palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor(245, 246, 250))
-    app.setPalette(palette)
+    dark_palette = QPalette()
+    dark_palette.setColor(QPalette.ColorRole.Window, QColor(18, 18, 18))
+    dark_palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
+    dark_palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 25))
+    dark_palette.setColor(QPalette.ColorRole.AlternateBase, QColor(18, 18, 18))
+    dark_palette.setColor(QPalette.ColorRole.ToolTipBase, Qt.GlobalColor.white)
+    dark_palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
+    dark_palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
+    dark_palette.setColor(QPalette.ColorRole.Button, QColor(30, 30, 30))
+    dark_palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
+    dark_palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
+    dark_palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
+    dark_palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+    dark_palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
+    app.setPalette(dark_palette)
 
     window = ModernUI()
     window.show()
