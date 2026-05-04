@@ -9,7 +9,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QStackedWidget, QListWidget, QListWidgetItem,
     QProgressBar, QTextEdit, QLineEdit, QFormLayout, QCheckBox,
-    QFrame, QSizePolicy, QScrollArea, QFileDialog
+    QFrame, QSizePolicy, QScrollArea, QFileDialog, QComboBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget, QSpinBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QThread
 from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QTextCursor, QPainter, QPen
@@ -342,7 +343,6 @@ class ModernUI(QMainWindow):
         header_layout.addStretch()
 
         header_layout.addWidget(QLabel("Time Range:"))
-        from PyQt6.QtWidgets import QComboBox
         self.time_range_combo = QComboBox()
         self.time_range_combo.addItems(["Last 24 Hours", "Last 7 Days", "Last 30 Days"])
         self.time_range_combo.setStyleSheet("background-color: #1e1e1e; color: white; padding: 5px; border-radius: 5px;")
@@ -358,7 +358,6 @@ class ModernUI(QMainWindow):
         table_header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         table_layout.addWidget(table_header)
 
-        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
         self.usage_table = QTableWidget(0, 4)
         self.usage_table.setHorizontalHeaderLabels(["Host", "Upload", "Download", "Total"])
         self.usage_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -412,7 +411,6 @@ class ModernUI(QMainWindow):
 
         layout.addLayout(header)
 
-        from PyQt6.QtWidgets import QTabWidget
         tabs = QTabWidget()
         tabs.setStyleSheet("""
             QTabWidget::pane { border: 1px solid #333; background: #1e1e1e; border-radius: 5px; }
@@ -480,7 +478,6 @@ class ModernUI(QMainWindow):
 
         # Tab 3: Relay Settings
         relay_w, relay_f = create_form_tab()
-        from PyQt6.QtWidgets import QSpinBox
         self.spin_parallel = QSpinBox()
         self.spin_parallel.setRange(1, 10)
         self.spin_parallel.setValue(self.config.get("parallel_relay", 1))
@@ -608,6 +605,12 @@ class ModernUI(QMainWindow):
             self.status_detail.setText(f"Listening on {self.config.get('listen_host')}:{self.config.get('listen_port')}")
 
     def _update_stats(self):
+        try:
+            self._update_stats_impl()
+        except Exception as e:
+            logging.debug(f"Stats update error: {e}")
+
+    def _update_stats_impl(self):
         days_map = {"Last 24 Hours": 1, "Last 7 Days": 7, "Last 30 Days": 30}
         selected_range = self.time_range_combo.currentText()
         days = days_map.get(selected_range, 1)
@@ -642,17 +645,20 @@ class ModernUI(QMainWindow):
                 history_text += f"{day['day']}: Up: {day['sent']/1024/1024:.1f}MB, Down: {day['received']/1024/1024:.1f}MB\n"
             self.history_summary.setText(history_text)
 
+        # Total Stats from DB (Persistent)
+        total_usage = self.proxy_service.get_total_usage()
+        if total_usage:
+            self.val_requests.setText(str(total_usage['total_requests']))
+            self.val_data.setText(f"{total_usage['total_bytes'] / (1024*1024):.1f} MB")
+
+        # Current Session Latency
         stats = self.proxy_service.get_stats()
         if stats:
             total_req = sum(s['requests'] for s in stats['per_site'])
-            total_bytes = sum(s['bytes'] for s in stats['per_site'])
             avg_latency = 0
             if total_req > 0:
                 avg_latency = sum(s['avg_ms'] * s['requests'] for s in stats['per_site']) / total_req
-
-            self.val_requests.setText(str(total_req))
-            self.val_data.setText(f"{total_bytes / (1024*1024):.1f} MB")
-            self.val_latency.setText(f"{avg_latency:.0f} ms")
+                self.val_latency.setText(f"{avg_latency:.0f} ms")
 
     def _append_log(self, msg, level):
         color = "#dcdde1"

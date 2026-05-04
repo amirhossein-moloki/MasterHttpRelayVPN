@@ -162,3 +162,29 @@ class UsageTracker:
             except Exception as e:
                 log.error(f"Error getting history: {e}")
                 return []
+
+    def get_total_stats(self):
+        """Get total requests and total bytes transferred (all time)."""
+        with self._lock:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                # Total Apps Script executions (from daily_quota table)
+                cursor.execute("SELECT SUM(count) FROM daily_quota")
+                total_req = cursor.fetchone()[0] or 0
+
+                # Total bytes from traffic_logs
+                cursor.execute("SELECT SUM(bytes_sent), SUM(bytes_received) FROM traffic_logs")
+                row = cursor.fetchone()
+                conn.close()
+                sent = row[0] or 0
+                received = row[1] or 0
+                return {
+                    "total_requests": total_req,
+                    "total_bytes": sent + received,
+                    "sent": sent,
+                    "received": received
+                }
+            except Exception as e:
+                log.error(f"Error getting total stats: {e}")
+                return {"total_requests": 0, "total_bytes": 0, "sent": 0, "received": 0}

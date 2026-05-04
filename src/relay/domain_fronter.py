@@ -89,7 +89,7 @@ class DomainFronter:
     )
     _SAFE_RETRY_METHODS = {"GET", "HEAD", "OPTIONS"}
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, usage_tracker=None):
         self.connect_host = config.get("google_ip", "216.239.38.120")
         self.sni_host = config.get("front_domain", "www.google.com")
         # SNI rotation pool — rotated per new outbound TLS connection so
@@ -110,7 +110,10 @@ class DomainFronter:
         # Simple execution monitor: log total consumed Apps Script executions.
         self._execution_report_interval = 5.0
         total_limit = 20000 * len(self._script_ids)
-        self._usage_tracker = UsageTracker(db_path=config.get("usage_db", "usage_stats.db"), limit=total_limit)
+        if usage_tracker:
+            self._usage_tracker = usage_tracker
+        else:
+            self._usage_tracker = UsageTracker(db_path=config.get("usage_db", "usage_stats.db"), limit=total_limit)
         self._exec_total = self._usage_tracker.get_count()
         self._execution_task: asyncio.Task | None = None
 
