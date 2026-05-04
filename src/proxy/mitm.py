@@ -28,7 +28,7 @@ log = logging.getLogger("MITM")
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SRC_DIR = os.path.dirname(_THIS_DIR)
 _PROJECT_ROOT = os.path.dirname(_SRC_DIR)
-CA_DIR = os.path.join(_PROJECT_ROOT, "ca")
+CA_DIR = os.path.join(_PROJECT_ROOT, "data", "ca")
 CA_KEY_FILE = os.path.join(CA_DIR, "ca.key")
 CA_CERT_FILE = os.path.join(CA_DIR, "ca.crt")
 

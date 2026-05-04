@@ -26,8 +26,12 @@ class ProxyService(QObject):
         script_ids = self.config.get("script_ids") or self.config.get("script_id")
         num_scripts = len(script_ids) if isinstance(script_ids, list) else (1 if script_ids else 0)
         total_limit = 20000 * num_scripts if num_scripts > 0 else 20000
+        # Ensure data directory exists
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+        os.makedirs(data_dir, exist_ok=True)
+
         self.usage_tracker = UsageTracker(
-            db_path=self.config.get("usage_db", "usage_stats.db"),
+            db_path=self.config.get("usage_db", os.path.join(data_dir, "usage_stats.db")),
             limit=total_limit
         )
 

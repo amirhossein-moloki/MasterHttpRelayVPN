@@ -48,6 +48,7 @@ from .proxy_support import (
     is_ip_literal,
     load_host_rules,
     load_advanced_rules,
+    load_rule_group,
     host_matches_advanced_rules,
     log_response_summary,
     parse_content_length,
@@ -146,12 +147,15 @@ class ProxyServer:
         self._block_hosts  = load_host_rules(config.get("block_hosts", []))
         self._bypass_hosts = load_host_rules(config.get("bypass_hosts", []))
 
-        # Bypass Groups
-        self._bypass_groups = []
-        for g in config.get("bypass_groups", []):
+        # Rule Groups (replacement for Bypass Groups)
+        self._rule_groups = []
+        # Support legacy "bypass_groups" key
+        raw_groups = config.get("rule_groups") or config.get("bypass_groups") or []
+        for g in raw_groups:
             if g.get("enabled", True):
-                rules = load_advanced_rules(g.get("rules", []))
-                self._bypass_groups.append(rules)
+                self._rule_groups.append(load_rule_group(g))
+
+        self._default_mode = config.get("default_connection_mode", "relay")
 
         # Route YouTube through the relay when requested; the Google frontend
         # IP can enforce SafeSearch on the SNI-rewrite path.
@@ -224,18 +228,57 @@ class ProxyServer:
             self._client_tasks.discard(task)
 
     def _is_blocked(self, host: str) -> bool:
-        return host_matches_rules(host, self._block_hosts)
+        # Check legacy block_hosts first
+        if host_matches_rules(host, self._block_hosts):
+            return True
+        # Check rule groups
+        for group in self._rule_groups:
+            if group["mode"] == "block" and host_matches_advanced_rules(host, group):
+                return True
+
+        if self._default_mode == "block":
+            # If default is block, it must be explicitly allowed by a direct or relay group
+            for group in self._rule_groups:
+                if group["mode"] in ("direct", "relay") and host_matches_advanced_rules(host, group):
+                    return False
+            return True
+
+        return False
 
     def _is_bypassed(self, host: str) -> bool:
         h = host.lower().rstrip(".")
         if h == "ir" or h.endswith(".ir"):
             return True
+        # Check legacy bypass_hosts
         if host_matches_rules(host, self._bypass_hosts):
             return True
-        for group_rules in self._bypass_groups:
-            if host_matches_advanced_rules(host, group_rules):
+        # Check rule groups
+        for group in self._rule_groups:
+            if group["mode"] == "direct" and host_matches_advanced_rules(host, group):
                 return True
+
+        if self._default_mode == "direct":
+            # If default is direct, it must be explicitly blocked or relayed
+            for group in self._rule_groups:
+                if group["mode"] in ("block", "relay") and host_matches_advanced_rules(host, group):
+                    return False
+            return True
+
         return False
+
+    def _should_relay(self, host: str) -> bool:
+        """Check if a host should be relayed through Apps Script."""
+        # 1. Explicitly relayed via groups
+        for group in self._rule_groups:
+            if group["mode"] == "relay" and host_matches_advanced_rules(host, group):
+                return True
+
+        # 2. Check if it's explicitly bypassed or blocked
+        if self._is_bypassed(host) or self._is_blocked(host):
+            return False
+
+        # 3. Default behavior
+        return self._default_mode == "relay"
 
     def _cache_allowed(self, method: str, url: str,
                        headers: dict | None, body: bytes) -> bool:
@@ -447,7 +490,7 @@ class ProxyServer:
             return
 
         if self._is_bypassed(host):
-            log.info("Bypass tunnel → %s:%d (matches bypass_hosts)", host, port)
+            log.info("Bypass tunnel → %s:%d", host, port)
             await self._do_direct_tunnel(host, port, reader, writer)
             return
 
@@ -519,10 +562,14 @@ class ProxyServer:
                 await self._do_mitm_connect(host, port, reader, writer)
             else:
                 await self._do_plain_http_tunnel(host, port, reader, writer)
-        elif port == 443:
-            await self._do_mitm_connect(host, port, reader, writer)
-        elif port == 80:
-            await self._do_plain_http_tunnel(host, port, reader, writer)
+        elif self._should_relay(host):
+            if port == 443:
+                await self._do_mitm_connect(host, port, reader, writer)
+            elif port == 80:
+                await self._do_plain_http_tunnel(host, port, reader, writer)
+            else:
+                log.info("Direct tunnel → %s:%d (non-HTTP port)", host, port)
+                await self._do_direct_tunnel(host, port, reader, writer)
         else:
             # Non-HTTP port (e.g. mtalk:5228 XMPP, IMAP, SMTP, SSH) —
             # payload isn't HTTP, so we can't relay or MITM. Tunnel bytes.
