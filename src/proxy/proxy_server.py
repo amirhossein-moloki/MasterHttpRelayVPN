@@ -169,9 +169,14 @@ class ProxyServer:
             self._SNI_REWRITE_SUFFIXES = SNI_REWRITE_SUFFIXES
 
         try:
-            from .mitm import MITMCertManager
+            from .mitm import MITMCertManager, HAS_CRYPTOGRAPHY
+            if not HAS_CRYPTOGRAPHY:
+                log.error("Apps Script relay requires the 'cryptography' package.")
+                log.error("Run: pip install cryptography")
+                raise SystemExit(1)
             self.mitm = MITMCertManager()
-        except ImportError:
+        except ImportError as e:
+            log.error(f"Failed to initialize MITM: {e}")
             log.error("Apps Script relay requires the 'cryptography' package.")
             log.error("Run: pip install cryptography")
             raise SystemExit(1)

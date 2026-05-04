@@ -17,20 +17,18 @@ import re
 import ssl
 import tempfile
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+
+from core.paths import CA_DIR, CA_KEY_FILE, CA_CERT_FILE
 
 log = logging.getLogger("MITM")
-
-# Keep the CA at repository root so docs/installer paths stay stable.
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_SRC_DIR = os.path.dirname(_THIS_DIR)
-_PROJECT_ROOT = os.path.dirname(_SRC_DIR)
-CA_DIR = os.path.join(_PROJECT_ROOT, "data", "ca")
-CA_KEY_FILE = os.path.join(CA_DIR, "ca.key")
-CA_CERT_FILE = os.path.join(CA_DIR, "ca.crt")
 
 
 # Filename-safe form of an SNI / hostname.  Windows forbids colons,
@@ -46,6 +44,8 @@ def _safe_domain_filename(domain: str) -> str:
 
 class MITMCertManager:
     def __init__(self):
+        if not HAS_CRYPTOGRAPHY:
+            raise ImportError("cryptography package is required for MITMCertManager")
         self._ca_key = None
         self._ca_cert = None
         self._ctx_cache: dict[str, ssl.SSLContext] = {}
