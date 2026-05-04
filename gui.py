@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QFrame, QSizePolicy, QScrollArea, QFileDialog
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QThread
-from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QTextCursor
+from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QTextCursor, QPainter, QPen
 import qtawesome as qta
 
 # Ensure src is in sys.path
@@ -23,6 +23,67 @@ from core.constants import __version__
 from core.google_ip_scanner import scan_sync
 
 # Setup Logging for UI
+class UsageChart(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.data = []  # List of {"day": str, "sent": int, "received": int}
+        self.setMinimumHeight(200)
+
+    def setData(self, data):
+        self.data = data
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.data:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        width = self.width()
+        height = self.height()
+        padding = 40
+
+        chart_width = width - 2 * padding
+        chart_height = height - 2 * padding
+
+        max_val = max((d['sent'] + d['received']) for d in self.data) if self.data else 1
+        if max_val == 0: max_val = 1
+
+        num_days = len(self.data)
+        bar_width = (chart_width / num_days) * 0.6 if num_days > 0 else 0
+        spacing = (chart_width / num_days) * 0.4 if num_days > 0 else 0
+
+        # Draw axes
+        painter.setPen(QPen(QColor("#555"), 2))
+        painter.drawLine(padding, height - padding, width - padding, height - padding)
+        painter.drawLine(padding, padding, padding, height - padding)
+
+        # Draw bars
+        for i, day in enumerate(self.data):
+            total = day['sent'] + day['received']
+            h = (total / max_val) * chart_height
+
+            x = padding + i * (bar_width + spacing) + spacing / 2
+            y = height - padding - h
+
+            # Received bar (bottom)
+            h_rec = (day['received'] / max_val) * chart_height
+            painter.setBrush(QColor("#3498db"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(int(x), int(height - padding - h_rec), int(bar_width), int(h_rec))
+
+            # Sent bar (top)
+            h_sent = (day['sent'] / max_val) * chart_height
+            painter.setBrush(QColor("#2ecc71"))
+            painter.drawRect(int(x), int(height - padding - h_rec - h_sent), int(bar_width), int(h_sent))
+
+            # Label
+            painter.setPen(QColor("#b0b0b0"))
+            painter.setFont(QFont("Arial", 8))
+            label = day['day'][-5:] # MM-DD
+            painter.drawText(int(x), height - padding + 20, label)
+
 class QtLogHandler(logging.Handler, QObject):
     new_log = pyqtSignal(str, str)
 
@@ -118,6 +179,7 @@ class ModernUI(QMainWindow):
 
         items = [
             ("Dashboard", "fa5s.tachometer-alt"),
+            ("Monitoring", "fa5s.chart-bar"),
             ("Settings", "fa5s.cog"),
             ("Logs", "fa5s.terminal"),
             ("IP Scanner", "fa5s.search"),
@@ -145,11 +207,13 @@ class ModernUI(QMainWindow):
         self.content_stack.setStyleSheet("background-color: #121212; color: #e0e0e0;")
 
         self.dashboard_page = self._create_dashboard_page()
+        self.monitoring_page = self._create_monitoring_page()
         self.settings_page = self._create_settings_page()
         self.logs_page = self._create_logs_page()
         self.scanner_page = self._create_scanner_page()
 
         self.content_stack.addWidget(self.dashboard_page)
+        self.content_stack.addWidget(self.monitoring_page)
         self.content_stack.addWidget(self.settings_page)
         self.content_stack.addWidget(self.logs_page)
         self.content_stack.addWidget(self.scanner_page)
@@ -264,29 +328,102 @@ class ModernUI(QMainWindow):
         layout.addStretch()
         return page
 
+    def _create_monitoring_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+
+        header_layout = QHBoxLayout()
+        header = QLabel("Usage Monitoring")
+        header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        header.setStyleSheet("color: white;")
+        header_layout.addWidget(header)
+        header_layout.addStretch()
+
+        header_layout.addWidget(QLabel("Time Range:"))
+        from PyQt6.QtWidgets import QComboBox
+        self.time_range_combo = QComboBox()
+        self.time_range_combo.addItems(["Last 24 Hours", "Last 7 Days", "Last 30 Days"])
+        self.time_range_combo.setStyleSheet("background-color: #1e1e1e; color: white; padding: 5px; border-radius: 5px;")
+        header_layout.addWidget(self.time_range_combo)
+        layout.addLayout(header_layout)
+
+        # Top 10 Table
+        table_container = QFrame()
+        table_container.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
+        table_layout = QVBoxLayout(table_container)
+
+        table_header = QLabel("Top 10 Most Active Hosts (Last 24h)")
+        table_header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        table_layout.addWidget(table_header)
+
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
+        self.usage_table = QTableWidget(0, 4)
+        self.usage_table.setHorizontalHeaderLabels(["Host", "Upload", "Download", "Total"])
+        self.usage_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.usage_table.setStyleSheet("""
+            QTableWidget { background-color: transparent; border: none; color: #e0e0e0; gridline-color: #333; }
+            QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 5px; border: 1px solid #333; }
+        """)
+        table_layout.addWidget(self.usage_table)
+        layout.addWidget(table_container)
+
+        # History Chart Placeholder
+        chart_container = QFrame()
+        chart_container.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
+        chart_layout = QVBoxLayout(chart_container)
+        chart_title = QLabel("Traffic History (Last 7 Days)")
+        chart_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        chart_layout.addWidget(chart_title)
+
+        self.usage_chart = UsageChart()
+        chart_layout.addWidget(self.usage_chart)
+
+        self.history_summary = QLabel()
+        self.history_summary.setStyleSheet("color: #b0b0b0; font-family: monospace;")
+        chart_layout.addWidget(self.history_summary)
+
+        layout.addWidget(chart_container)
+
+        return page
+
     def _create_settings_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(30, 30, 30, 30)
 
-        header = QLabel("Settings")
-        header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
-        header.setStyleSheet("color: white;")
-        layout.addWidget(header)
+        header = QHBoxLayout()
+        header_text = QLabel("Settings")
+        header_text.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        header_text.setStyleSheet("color: white;")
+        header.addWidget(header_text)
+        header.addStretch()
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("background-color: transparent;")
-        scroll_content = QWidget()
-        scroll_content.setStyleSheet("background-color: transparent;")
-        form_layout = QFormLayout(scroll_content)
-        form_layout.setSpacing(15)
+        btn_import = QPushButton("Import")
+        btn_import.setIcon(qta.icon("fa5s.file-import", color="white"))
+        btn_import.clicked.connect(self._import_config)
+        header.addWidget(btn_import)
+
+        btn_export = QPushButton("Export")
+        btn_export.setIcon(qta.icon("fa5s.file-export", color="white"))
+        btn_export.clicked.connect(self._export_config)
+        header.addWidget(btn_export)
+
+        layout.addLayout(header)
+
+        from PyQt6.QtWidgets import QTabWidget
+        tabs = QTabWidget()
+        tabs.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #333; background: #1e1e1e; border-radius: 5px; }
+            QTabBar::tab { background: #252525; color: #b0b0b0; padding: 10px 20px; border-top-left-radius: 5px; border-top-right-radius: 5px; margin-right: 2px; }
+            QTabBar::tab:selected { background: #1e1e1e; color: #3498db; border-bottom: 2px solid #3498db; }
+        """)
 
         # Styles for Inputs
         input_style = """
-            QLineEdit {
-                background-color: #1e1e1e;
+            QLineEdit, QSpinBox, QDoubleSpinBox {
+                background-color: #121212;
                 color: #e0e0e0;
                 border: 1px solid #333;
                 padding: 8px;
@@ -294,63 +431,79 @@ class ModernUI(QMainWindow):
             }
             QCheckBox { color: #e0e0e0; }
         """
-
-        # Config Fields
-        self.edit_script_id = QLineEdit(self.config.get("script_id", ""))
-        self.edit_script_id.setPlaceholderText("Apps Script Deployment ID")
-        self.edit_script_id.setStyleSheet(input_style)
-
         label_style = "color: #b0b0b0;"
-        def add_form_row(label_text, widget):
-            lbl = QLabel(label_text)
-            lbl.setStyleSheet(label_style)
-            form_layout.addRow(lbl, widget)
 
-        add_form_row("Deployment ID:", self.edit_script_id)
+        def create_form_tab():
+            w = QWidget()
+            f = QFormLayout(w)
+            f.setSpacing(15)
+            f.setContentsMargins(20, 20, 20, 20)
+            return w, f
+
+        def add_row(form, label, widget):
+            lbl = QLabel(label)
+            lbl.setStyleSheet(label_style)
+            form.addRow(lbl, widget)
+
+        # Tab 1: General
+        general_w, general_f = create_form_tab()
+        self.edit_script_id = QLineEdit(self.config.get("script_id", ""))
+        self.edit_script_id.setStyleSheet(input_style)
+        add_row(general_f, "Apps Script ID:", self.edit_script_id)
 
         self.edit_auth_key = QLineEdit(self.config.get("auth_key", ""))
         self.edit_auth_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.edit_auth_key.setStyleSheet(input_style)
-        add_form_row("Auth Key:", self.edit_auth_key)
+        add_row(general_f, "Auth Key:", self.edit_auth_key)
 
         self.edit_google_ip = QLineEdit(self.config.get("google_ip", "216.239.38.120"))
         self.edit_google_ip.setStyleSheet(input_style)
-        add_form_row("Google IP:", self.edit_google_ip)
+        add_row(general_f, "Google Frontend IP:", self.edit_google_ip)
 
+        tabs.addTab(general_w, "General")
+
+        # Tab 2: Network
+        network_w, network_f = create_form_tab()
         self.edit_listen_port = QLineEdit(str(self.config.get("listen_port", 8085)))
         self.edit_listen_port.setStyleSheet(input_style)
-        add_form_row("HTTP Port:", self.edit_listen_port)
+        add_row(network_f, "HTTP Proxy Port:", self.edit_listen_port)
 
         self.edit_socks_port = QLineEdit(str(self.config.get("socks5_port", 1080)))
         self.edit_socks_port.setStyleSheet(input_style)
-        add_form_row("SOCKS5 Port:", self.edit_socks_port)
+        add_row(network_f, "SOCKS5 Port:", self.edit_socks_port)
 
-        self.check_lan = QCheckBox("Enable LAN Sharing")
+        self.check_lan = QCheckBox("Allow LAN connections")
         self.check_lan.setChecked(self.config.get("lan_sharing", False))
-        self.check_lan.setStyleSheet(input_style)
-        add_form_row("", self.check_lan)
+        add_row(network_f, "", self.check_lan)
+
+        tabs.addTab(network_w, "Network")
+
+        # Tab 3: Relay Settings
+        relay_w, relay_f = create_form_tab()
+        from PyQt6.QtWidgets import QSpinBox
+        self.spin_parallel = QSpinBox()
+        self.spin_parallel.setRange(1, 10)
+        self.spin_parallel.setValue(self.config.get("parallel_relay", 1))
+        self.spin_parallel.setStyleSheet(input_style)
+        add_row(relay_f, "Parallel Relay Count:", self.spin_parallel)
 
         self.edit_bypass_hosts = QTextEdit()
-        bypass_list = self.config.get("bypass_hosts", [])
-        self.edit_bypass_hosts.setPlainText("\n".join(bypass_list))
-        self.edit_bypass_hosts.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #e0e0e0;
-                border: 1px solid #333;
-                padding: 8px;
-                border-radius: 5px;
-                min-height: 100px;
-            }
-        """)
-        add_form_row("Bypass Hosts\n(one per line):", self.edit_bypass_hosts)
+        self.edit_bypass_hosts.setPlainText("\n".join(self.config.get("bypass_hosts", [])))
+        self.edit_bypass_hosts.setStyleSheet("background-color: #121212; color: #e0e0e0; border: 1px solid #333; border-radius: 5px;")
+        add_row(relay_f, "Bypass Hosts:", self.edit_bypass_hosts)
 
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
+        tabs.addTab(relay_w, "Relay")
+
+        layout.addWidget(tabs)
+
+        self.restart_hint = QLabel("Note: Changes to ports or LAN sharing require a proxy restart.")
+        self.restart_hint.setStyleSheet("color: #e67e22; font-size: 11px; margin-top: 5px;")
+        self.restart_hint.setVisible(False)
+        layout.addWidget(self.restart_hint)
 
         btn_save = QPushButton("Save Settings")
         btn_save.setFixedSize(150, 40)
-        btn_save.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; font-weight: bold;")
+        btn_save.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; font-weight: bold; margin-top: 10px;")
         btn_save.clicked.connect(self._save_settings_from_ui)
         layout.addWidget(btn_save, alignment=Qt.AlignmentFlag.AlignRight)
 
@@ -455,7 +608,11 @@ class ModernUI(QMainWindow):
             self.status_detail.setText(f"Listening on {self.config.get('listen_host')}:{self.config.get('listen_port')}")
 
     def _update_stats(self):
-        usage = self.proxy_service.get_usage()
+        days_map = {"Last 24 Hours": 1, "Last 7 Days": 7, "Last 30 Days": 30}
+        selected_range = self.time_range_combo.currentText()
+        days = days_map.get(selected_range, 1)
+
+        usage = self.proxy_service.get_usage(days=days)
         if usage:
             self.quota_label.setText(f"{usage['count']} / {usage['limit']}")
             self.quota_progress.setMaximum(usage['limit'])
@@ -466,6 +623,24 @@ class ModernUI(QMainWindow):
                 self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #f1c40f; }")
             else:
                 self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #3498db; }")
+
+            # Update Monitoring Table
+            top_hosts = usage.get("top_hosts", [])
+            self.usage_table.setRowCount(len(top_hosts))
+            for i, h in enumerate(top_hosts):
+                self.usage_table.setItem(i, 0, QTableWidgetItem(h['host']))
+                self.usage_table.setItem(i, 1, QTableWidgetItem(f"{h['sent']/1024/1024:.2f} MB"))
+                self.usage_table.setItem(i, 2, QTableWidgetItem(f"{h['received']/1024/1024:.2f} MB"))
+                self.usage_table.setItem(i, 3, QTableWidgetItem(f"{h['total']/1024/1024:.2f} MB"))
+
+            # Update History Chart
+            history = usage.get("history", [])
+            self.usage_chart.setData(history)
+
+            history_text = "Recent History:\n"
+            for day in history[-3:]:
+                history_text += f"{day['day']}: Up: {day['sent']/1024/1024:.1f}MB, Down: {day['received']/1024/1024:.1f}MB\n"
+            self.history_summary.setText(history_text)
 
         stats = self.proxy_service.get_stats()
         if stats:
@@ -489,6 +664,7 @@ class ModernUI(QMainWindow):
         self.log_view.moveCursor(QTextCursor.MoveOperation.End)
 
     def _save_settings_from_ui(self):
+        self.restart_hint.setVisible(True)
         self.config["script_id"] = self.edit_script_id.text()
         self.config["auth_key"] = self.edit_auth_key.text()
         self.config["google_ip"] = self.edit_google_ip.text()
@@ -498,12 +674,42 @@ class ModernUI(QMainWindow):
         except:
             pass
         self.config["lan_sharing"] = self.check_lan.isChecked()
+        self.config["parallel_relay"] = self.spin_parallel.value()
 
         bypass_text = self.edit_bypass_hosts.toPlainText()
         self.config["bypass_hosts"] = [h.strip() for h in bypass_text.split("\n") if h.strip()]
 
         self.config["mode"] = "apps_script"
         self._save_config()
+
+    def _import_config(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Config", "", "JSON Files (*.json)")
+        if file_path:
+            try:
+                with open(file_path, "r") as f:
+                    new_config = json.load(f)
+                    self.config.update(new_config)
+                    self._save_config()
+                    # Reload UI
+                    self.edit_script_id.setText(self.config.get("script_id", ""))
+                    self.edit_auth_key.setText(self.config.get("auth_key", ""))
+                    self.edit_google_ip.setText(self.config.get("google_ip", ""))
+                    self.edit_listen_port.setText(str(self.config.get("listen_port", 8085)))
+                    self.edit_socks_port.setText(str(self.config.get("socks5_port", 1080)))
+                    self.check_lan.setChecked(self.config.get("lan_sharing", False))
+                    self.spin_parallel.setValue(self.config.get("parallel_relay", 1))
+                    self.edit_bypass_hosts.setPlainText("\n".join(self.config.get("bypass_hosts", [])))
+            except Exception as e:
+                logging.error(f"Import failed: {e}")
+
+    def _export_config(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Config", "config_preset.json", "JSON Files (*.json)")
+        if file_path:
+            try:
+                with open(file_path, "w") as f:
+                    json.dump(self.config, f, indent=2)
+            except Exception as e:
+                logging.error(f"Export failed: {e}")
 
     def _run_scan(self):
         self.scan_btn.setEnabled(False)

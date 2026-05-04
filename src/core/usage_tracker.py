@@ -1,101 +1,164 @@
-import json
+import sqlite3
 import os
 import time
 import threading
 import logging
+import queue
 from datetime import datetime, timedelta
 
 log = logging.getLogger("UsageTracker")
 
 class UsageTracker:
-    def __init__(self, filepath="usage_stats.json", limit=20000):
-        self.filepath = filepath
+    def __init__(self, db_path="usage_stats.db", limit=20000):
+        self.db_path = db_path
         self.limit = limit
         self._lock = threading.Lock()
-        self.stats = self._load_stats()
-        self._check_reset()
+        self._queue = queue.Queue()
+        self._init_db()
 
-    def _load_stats(self):
-        if os.path.exists(self.filepath):
-            try:
-                with open(self.filepath, "r") as f:
-                    return json.load(f)
-            except:
-                pass
-        return {"count": 0, "last_reset": time.time()}
+        self._worker_thread = threading.Thread(target=self._db_worker, daemon=True)
+        self._worker_thread.start()
 
-    def _save_stats(self):
-        # Using a lock to prevent concurrent writes from different threads
+    def _init_db(self):
         with self._lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            # Table for daily execution count (Apps Script quota)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS daily_quota (
+                    date TEXT PRIMARY KEY,
+                    count INTEGER DEFAULT 0
+                )
+            """)
+            # Table for detailed traffic logs
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS traffic_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    host TEXT,
+                    bytes_sent INTEGER,
+                    bytes_received INTEGER
+                )
+            """)
+            # Indexing for performance
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic_logs(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_traffic_host ON traffic_logs(host)")
+            conn.commit()
+            conn.close()
+
+    def _db_worker(self):
+        """Background worker to handle DB writes without blocking the event loop."""
+        conn = sqlite3.connect(self.db_path)
+        while True:
             try:
-                with open(self.filepath, "w") as f:
-                    json.dump(self.stats, f)
+                task = self._queue.get()
+                if task is None: break # Signal to stop
+
+                type, data = task
+                cursor = conn.cursor()
+                if type == "quota":
+                    today, count = data
+                    cursor.execute("""
+                        INSERT INTO daily_quota (date, count) VALUES (?, ?)
+                        ON CONFLICT(date) DO UPDATE SET count = count + ?
+                    """, (today, count, count))
+                elif type == "traffic":
+                    ts, host, sent, received = data
+                    cursor.execute("""
+                        INSERT INTO traffic_logs (timestamp, host, bytes_sent, bytes_received)
+                        VALUES (?, ?, ?, ?)
+                    """, (ts, host, sent, received))
+
+                conn.commit()
+                self._queue.task_done()
             except Exception as e:
-                log.error(f"Error saving usage stats: {e}")
+                log.error(f"DB Worker error: {e}")
+                time.sleep(1) # Simple backoff
 
-    def _get_next_reset_time(self, last_reset_ts):
-        last_reset_dt = datetime.fromtimestamp(last_reset_ts)
-        # Reset at 10:30 AM
-        reset_time = last_reset_dt.replace(hour=10, minute=30, second=0, microsecond=0)
-
-        # If last reset was before 10:30 AM today, then next reset is today at 10:30 AM
-        # But if last reset was after 10:30 AM today, next reset is tomorrow at 10:30 AM
-        if last_reset_dt >= reset_time:
-            reset_time += timedelta(days=1)
-
-        return reset_time.timestamp()
-
-    def _check_reset(self):
-        with self._lock:
-            now = time.time()
-            # A more robust reset logic:
-            # If current time has passed 10:30 AM and the last reset was before the most recent 10:30 AM, then reset.
-
-            current_dt = datetime.fromtimestamp(now)
-            today_1030 = current_dt.replace(hour=10, minute=30, second=0, microsecond=0)
-
-            needs_save = False
-            if now >= today_1030.timestamp():
-                # Most recent reset should have been today at 10:30
-                last_reset_dt = datetime.fromtimestamp(self.stats["last_reset"])
-                if last_reset_dt < today_1030:
-                    self.stats["count"] = 0
-                    self.stats["last_reset"] = now # Or today_1030.timestamp()
-                    needs_save = True
-            else:
-                # Most recent reset should have been yesterday at 10:30
-                yesterday_1030 = today_1030 - timedelta(days=1)
-                last_reset_dt = datetime.fromtimestamp(self.stats["last_reset"])
-                if last_reset_dt < yesterday_1030:
-                    self.stats["count"] = 0
-                    self.stats["last_reset"] = now
-                    needs_save = True
-
-            if needs_save:
-                # Can't call self._save_stats() here because it would double-lock
-                try:
-                    with open(self.filepath, "w") as f:
-                        json.dump(self.stats, f)
-                except Exception as e:
-                    log.error(f"Error saving usage stats during reset: {e}")
+    def _get_today_str(self):
+        now = datetime.now()
+        reset_time = now.replace(hour=10, minute=30, second=0, microsecond=0)
+        if now < reset_time:
+            return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        return now.strftime("%Y-%m-%d")
 
     def add_request(self, count=1):
-        self._check_reset()
-        with self._lock:
-            self.stats["count"] += count
-        self._save_stats()
+        """Record Apps Script executions for quota tracking (Async)."""
+        today = self._get_today_str()
+        self._queue.put(("quota", (today, count)))
+
+    def add_traffic(self, host, bytes_sent, bytes_received):
+        """Record detailed traffic log (Async)."""
+        self._queue.put(("traffic", (time.time(), host, bytes_sent, bytes_received)))
 
     def get_count(self):
-        self._check_reset()
+        """Get today's execution count (Sync - used for display/limit checks)."""
+        today = self._get_today_str()
         with self._lock:
-            return self.stats["count"]
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT count FROM daily_quota WHERE date = ?", (today,))
+                row = cursor.fetchone()
+                conn.close()
+                return row[0] if row else 0
+            except Exception as e:
+                log.error(f"Error getting count from DB: {e}")
+                return 0
 
     def get_remaining(self):
         return max(0, self.limit - self.get_count())
 
-    def set_limit(self, limit):
-        with self._lock:
-            self.limit = limit
-
     def is_over_limit(self):
         return self.get_count() >= self.limit
+
+    def get_top_hosts(self, limit=10, days=1):
+        """Get top hosts by total traffic in the last N days."""
+        since = time.time() - (days * 86400)
+        with self._lock:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT host, SUM(bytes_sent), SUM(bytes_received), COUNT(*)
+                    FROM traffic_logs
+                    WHERE timestamp > ?
+                    GROUP BY host
+                    ORDER BY (SUM(bytes_sent) + SUM(bytes_received)) DESC
+                    LIMIT ?
+                """, (since, limit))
+                rows = cursor.fetchall()
+                conn.close()
+                return [
+                    {
+                        "host": r[0],
+                        "sent": r[1] or 0,
+                        "received": r[2] or 0,
+                        "total": (r[1] or 0) + (r[2] or 0),
+                        "requests": r[3]
+                    } for r in rows
+                ]
+            except Exception as e:
+                log.error(f"Error getting top hosts: {e}")
+                return []
+
+    def get_history(self, days=7):
+        """Get daily traffic history for charts."""
+        with self._lock:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                           SUM(bytes_sent), SUM(bytes_received)
+                    FROM traffic_logs
+                    WHERE timestamp > ?
+                    GROUP BY day
+                    ORDER BY day ASC
+                """, (time.time() - (days * 86400),))
+                rows = cursor.fetchall()
+                conn.close()
+                return [{"day": r[0], "sent": r[1] or 0, "received": r[2] or 0} for r in rows]
+            except Exception as e:
+                log.error(f"Error getting history: {e}")
+                return []
