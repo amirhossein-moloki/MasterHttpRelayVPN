@@ -25,7 +25,7 @@ from core.constants import __version__
 from core.lan_utils import log_lan_access
 from core.google_ip_scanner import scan_sync
 from core.logging_utils import configure as configure_logging, print_banner
-from proxy.mitm import CA_CERT_FILE
+from core.paths import CA_CERT_FILE
 from proxy.proxy_server import ProxyServer
 
 
@@ -123,22 +123,26 @@ def main():
     # Handle cert-only commands before loading config so they can run standalone.
     if args.install_cert or args.uninstall_cert:
         configure_logging("INFO")
-        _log = logging.getLogger("Main")
+        log = logging.getLogger("Main")
 
         if args.install_cert:
-            _log.info("Installing CA certificate…")
+            log.info("Installing CA certificate…")
             if not os.path.exists(CA_CERT_FILE):
-                from proxy.mitm import MITMCertManager
+                from proxy.mitm import MITMCertManager, HAS_CRYPTOGRAPHY
+                if not HAS_CRYPTOGRAPHY:
+                    log.error("Cannot generate CA certificate: 'cryptography' package is missing.")
+                    log.error("Please run: pip install cryptography")
+                    sys.exit(1)
                 MITMCertManager()  # side-effect: creates ca/ca.crt + ca/ca.key
             ok = install_ca(CA_CERT_FILE)
             sys.exit(0 if ok else 1)
 
-        _log.info("Removing CA certificate…")
+        log.info("Removing CA certificate…")
         ok = uninstall_ca(CA_CERT_FILE)
         if ok:
-            _log.info("CA certificate removed successfully.")
+            log.info("CA certificate removed successfully.")
         else:
-            _log.warning("CA certificate removal may have failed. Check logs above.")
+            log.warning("CA certificate removal may have failed. Check logs above.")
         sys.exit(0 if ok else 1)
 
     config_path = args.config
@@ -232,8 +236,8 @@ def main():
     if args.scan:
         configure_logging("INFO")
         front_domain = config.get("front_domain", "www.google.com")
-        _log = logging.getLogger("Main")
-        _log.info(f"Scanning Google IPs (fronting domain: {front_domain})")
+        log = logging.getLogger("Main")
+        log.info(f"Scanning Google IPs (fronting domain: {front_domain})")
         ok = scan_sync(front_domain)
         sys.exit(0 if ok else 1)
 
@@ -256,8 +260,11 @@ def main():
     # Ensure CA file exists before checking / installing it.
     # MITMCertManager generates ca/ca.crt on first instantiation.
     if not os.path.exists(CA_CERT_FILE):
-        from proxy.mitm import MITMCertManager
-        MITMCertManager()  # side-effect: creates ca/ca.crt + ca/ca.key
+        from proxy.mitm import MITMCertManager, HAS_CRYPTOGRAPHY
+        if HAS_CRYPTOGRAPHY:
+            MITMCertManager()  # side-effect: creates ca/ca.crt + ca/ca.key
+        else:
+            log.warning("CA certificate not found and 'cryptography' is missing. MITM will not be available.")
 
     # Auto-install MITM CA if not already trusted
     if not args.no_cert_check:
