@@ -99,11 +99,26 @@ def parse_args():
         action="store_true",
         help="Scan Google IPs to find the fastest reachable one and exit.",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Start the graphical user interface.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+
+    if args.gui:
+        try:
+            from gui import main as gui_main
+            gui_main()
+            sys.exit(0)
+        except ImportError as e:
+            print(f"Could not start GUI: {e}")
+            print("Make sure PyQt6 and qtawesome are installed: pip install PyQt6 qtawesome")
+            sys.exit(1)
 
     # Handle cert-only commands before loading config so they can run standalone.
     if args.install_cert or args.uninstall_cert:

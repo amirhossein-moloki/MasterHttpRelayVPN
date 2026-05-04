@@ -46,6 +46,7 @@ from core.constants import (
     TLS_CONNECT_TIMEOUT,
     WARM_POOL_COUNT,
 )
+from core.usage_tracker import UsageTracker
 from .fronting_support import (
     HostStat,
     build_sni_pool,
@@ -108,7 +109,8 @@ class DomainFronter:
 
         # Simple execution monitor: log total consumed Apps Script executions.
         self._execution_report_interval = 5.0
-        self._exec_total = 0
+        self._usage_tracker = UsageTracker()
+        self._exec_total = self._usage_tracker.get_count()
         self._execution_task: asyncio.Task | None = None
 
         # Fan-out parallel relay: fire N Apps Script instances concurrently,
@@ -267,7 +269,8 @@ class DomainFronter:
         """Record consumed Apps Script executions."""
         if not sid or count <= 0:
             return
-        self._exec_total += count
+        self._usage_tracker.add_request(count)
+        self._exec_total = self._usage_tracker.get_count()
 
     async def _execution_logger(self):
         """Log execution usage every N seconds, only when the count changed."""
@@ -1260,6 +1263,14 @@ class DomainFronter:
 
         Returns a raw HTTP response (status + headers + body).
         """
+        if self._usage_tracker.is_over_limit():
+            log.warning("Daily App Script request limit reached (%d).", self._usage_tracker.limit)
+            return error_response(
+                429,
+                f"Daily App Script request limit reached ({self._usage_tracker.limit}). "
+                "The quota will reset tomorrow at 10:30 AM."
+            )
+
         if not self._warmed:
             await self._warm_pool()
 

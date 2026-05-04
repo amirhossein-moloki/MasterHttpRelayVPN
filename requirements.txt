@@ -18,3 +18,7 @@ zstandard>=0.22.0
 
 # LAN interface detection now uses only the Python standard library
 # (works on Windows, Linux, macOS, Android/Termux without a C compiler).
+
+# GUI
+PyQt6
+qtawesome
