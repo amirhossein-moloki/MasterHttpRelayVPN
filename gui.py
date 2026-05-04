@@ -117,10 +117,10 @@ class ModernUI(QMainWindow):
         """)
 
         items = [
-            ("Dashboard", "fa.dashboard"),
-            ("Settings", "fa.gears"),
-            ("Logs", "fa.terminal"),
-            ("IP Scanner", "fa.search"),
+            ("Dashboard", "fa5s.tachometer-alt"),
+            ("Settings", "fa5s.cog"),
+            ("Logs", "fa5s.terminal"),
+            ("IP Scanner", "fa5s.search"),
         ]
 
         for text, icon in items:
@@ -173,7 +173,7 @@ class ModernUI(QMainWindow):
         status_layout.setContentsMargins(20, 20, 20, 20)
 
         self.status_icon = QLabel()
-        self.status_icon.setPixmap(qta.icon("fa.circle", color="#7f8c8d").pixmap(48, 48))
+        self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#7f8c8d").pixmap(48, 48))
         status_layout.addWidget(self.status_icon)
 
         status_text_layout = QVBoxLayout()
@@ -372,25 +372,25 @@ class ModernUI(QMainWindow):
     def _on_proxy_status_change(self, status):
         if status == "starting":
             self.status_label.setText("Status: Starting...")
-            self.status_icon.setPixmap(qta.icon("fa.circle", color="#f1c40f").pixmap(48, 48))
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#f1c40f").pixmap(48, 48))
             self.toggle_btn.setEnabled(False)
         elif status == "stopped":
             self.status_label.setText("Status: Disconnected")
-            self.status_icon.setPixmap(qta.icon("fa.circle", color="#7f8c8d").pixmap(48, 48))
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#7f8c8d").pixmap(48, 48))
             self.toggle_btn.setText("Start Proxy")
             self.toggle_btn.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 5px; font-weight: bold;")
             self.toggle_btn.setEnabled(True)
             self.status_detail.setText("Ready to start")
         elif "error" in status:
             self.status_label.setText("Status: Error")
-            self.status_icon.setPixmap(qta.icon("fa.circle", color="#e74c3c").pixmap(48, 48))
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#e74c3c").pixmap(48, 48))
             self.status_detail.setText(status)
             self.toggle_btn.setText("Start Proxy")
             self.toggle_btn.setEnabled(True)
         else:
             # Running
             self.status_label.setText("Status: Connected")
-            self.status_icon.setPixmap(qta.icon("fa.circle", color="#2ecc71").pixmap(48, 48))
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#2ecc71").pixmap(48, 48))
             self.toggle_btn.setText("Stop Proxy")
             self.toggle_btn.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 5px; font-weight: bold;")
             self.toggle_btn.setEnabled(True)
