@@ -93,5 +93,9 @@ class UsageTracker:
     def get_remaining(self):
         return max(0, self.limit - self.get_count())
 
+    def set_limit(self, limit):
+        with self._lock:
+            self.limit = limit
+
     def is_over_limit(self):
         return self.get_count() >= self.limit
