@@ -71,7 +71,7 @@ class ProxyServer:
         "audio/",
     )
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, usage_tracker=None):
         self.host = config.get("listen_host", "127.0.0.1")
         self.port = config.get("listen_port", 8080)
         self.socks_enabled = config.get("socks5_enabled", True)
@@ -84,7 +84,7 @@ class ProxyServer:
                 f"(both set to {self.port} on {self.host}). "
                 f"Change one of them in config.json."
             )
-        self.fronter = DomainFronter(config)
+        self.fronter = DomainFronter(config, usage_tracker=usage_tracker)
         self.mitm = None
         self._cache = ResponseCache(max_mb=CACHE_MAX_MB)
         self._direct_fail_until: dict[str, float] = {}

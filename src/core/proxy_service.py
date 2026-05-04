@@ -5,6 +5,7 @@ from typing import Optional, Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from proxy.proxy_server import ProxyServer
+from core.usage_tracker import UsageTracker
 
 log = logging.getLogger("ProxyService")
 
@@ -18,6 +19,15 @@ class ProxyService(QObject):
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self.is_running = False
+
+        # Initialize persistent usage tracker
+        script_ids = self.config.get("script_ids") or self.config.get("script_id")
+        num_scripts = len(script_ids) if isinstance(script_ids, list) else (1 if script_ids else 0)
+        total_limit = 20000 * num_scripts if num_scripts > 0 else 20000
+        self.usage_tracker = UsageTracker(
+            db_path=self.config.get("usage_db", "usage_stats.db"),
+            limit=total_limit
+        )
 
     def _set_status(self, status: str):
         self.status_changed.emit(status)
@@ -35,7 +45,7 @@ class ProxyService(QObject):
         asyncio.set_event_loop(self.loop)
 
         self._set_status("starting")
-        self.server = ProxyServer(self.config)
+        self.server = ProxyServer(self.config, usage_tracker=self.usage_tracker)
 
         try:
             self.loop.run_until_complete(self.server.start(on_ready=lambda: self._set_status("running")))
@@ -77,14 +87,15 @@ class ProxyService(QObject):
         return None
 
     def get_usage(self, days=1):
-        if self.server and self.server.fronter and self.server.fronter._usage_tracker:
-            tracker = self.server.fronter._usage_tracker
-            return {
-                "count": tracker.get_count(),
-                "limit": tracker.limit,
-                "remaining": tracker.get_remaining(),
-                "percent": (tracker.get_count() / tracker.limit) * 100 if tracker.limit > 0 else 0,
-                "top_hosts": tracker.get_top_hosts(limit=10, days=days),
-                "history": tracker.get_history(days=7 if days <= 7 else days)
-            }
-        return None
+        tracker = self.usage_tracker
+        return {
+            "count": tracker.get_count(),
+            "limit": tracker.limit,
+            "remaining": tracker.get_remaining(),
+            "percent": (tracker.get_count() / tracker.limit) * 100 if tracker.limit > 0 else 0,
+            "top_hosts": tracker.get_top_hosts(limit=10, days=days),
+            "history": tracker.get_history(days=7 if days <= 7 else days)
+        }
+
+    def get_total_usage(self):
+        return self.usage_tracker.get_total_stats()
