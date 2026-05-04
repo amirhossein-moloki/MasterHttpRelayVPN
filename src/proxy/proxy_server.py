@@ -50,6 +50,7 @@ from .proxy_support import (
     log_response_summary,
     parse_content_length,
 )
+from core.geoip_utils import IPBypassChecker
 from relay.relay_response import split_raw_response
 
 log = logging.getLogger("Proxy")
@@ -143,6 +144,10 @@ class ProxyServer:
         # e.g. ".local" matches any *.local domain.
         self._block_hosts  = load_host_rules(config.get("block_hosts", []))
         self._bypass_hosts = load_host_rules(config.get("bypass_hosts", []))
+        self._ip_bypass_checker = IPBypassChecker(
+            manual_cidrs=config.get("manual_bypass_ips", []),
+            bypass_iran=config.get("bypass_iran_ips", True)
+        )
 
         # Route YouTube through the relay when requested; the Google frontend
         # IP can enforce SafeSearch on the SNI-rewrite path.
@@ -217,11 +222,32 @@ class ProxyServer:
     def _is_blocked(self, host: str) -> bool:
         return host_matches_rules(host, self._block_hosts)
 
-    def _is_bypassed(self, host: str) -> bool:
+    async def _is_bypassed(self, host: str) -> bool:
         h = host.lower().rstrip(".")
         if h == "ir" or h.endswith(".ir"):
             return True
-        return host_matches_rules(host, self._bypass_hosts)
+        if host_matches_rules(host, self._bypass_hosts):
+            return True
+
+        # IP based bypass
+        if is_ip_literal(h):
+            if self._ip_bypass_checker.is_bypassed(h):
+                log.info("Bypass tunnel → %s (matches Iran/Manual IP policy)", h)
+                return True
+        else:
+            # Resolve and check IP for non-literal hosts
+            try:
+                loop = asyncio.get_running_loop()
+                infos = await loop.getaddrinfo(h, None, family=socket.AF_INET)
+                for info in infos:
+                    ip = info[4][0]
+                    if self._ip_bypass_checker.is_bypassed(ip):
+                        log.info("Bypass tunnel → %s (resolved to Iran/Manual IP %s)", host, ip)
+                        return True
+            except:
+                pass
+
+        return False
 
     def _cache_allowed(self, method: str, url: str,
                        headers: dict | None, body: bytes) -> bool:
@@ -432,8 +458,8 @@ class ProxyServer:
                 pass
             return
 
-        if self._is_bypassed(host):
-            log.info("Bypass tunnel → %s:%d (matches bypass_hosts)", host, port)
+        if await self._is_bypassed(host):
+            log.info("Bypass tunnel → %s:%d (matches bypass policy)", host, port)
             await self._do_direct_tunnel(host, port, reader, writer)
             return
 

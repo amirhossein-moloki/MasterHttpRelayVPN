@@ -8,9 +8,10 @@ from datetime import datetime, timedelta
 log = logging.getLogger("UsageTracker")
 
 class UsageTracker:
-    def __init__(self, filepath="usage_stats.json", limit=20000):
+    def __init__(self, filepath="usage_stats.json", limit=20000, history_days=30):
         self.filepath = filepath
         self.limit = limit
+        self.history_days = history_days
         self._lock = threading.Lock()
         self.stats = self._load_stats()
         self._check_reset()
@@ -19,13 +20,17 @@ class UsageTracker:
         if os.path.exists(self.filepath):
             try:
                 with open(self.filepath, "r") as f:
-                    return json.load(f)
-            except:
-                pass
-        return {"count": 0, "last_reset": time.time()}
+                    data = json.load(f)
+                    # Ensure basic structure
+                    if "count" not in data: data["count"] = 0
+                    if "last_reset" not in data: data["last_reset"] = time.time()
+                    if "history" not in data: data["history"] = {}
+                    return data
+            except Exception as e:
+                log.error(f"Error loading usage stats: {e}")
+        return {"count": 0, "last_reset": time.time(), "history": {}}
 
     def _save_stats(self):
-        # Using a lock to prevent concurrent writes from different threads
         with self._lock:
             try:
                 with open(self.filepath, "w") as f:
@@ -33,46 +38,39 @@ class UsageTracker:
             except Exception as e:
                 log.error(f"Error saving usage stats: {e}")
 
-    def _get_next_reset_time(self, last_reset_ts):
-        last_reset_dt = datetime.fromtimestamp(last_reset_ts)
-        # Reset at 10:30 AM
-        reset_time = last_reset_dt.replace(hour=10, minute=30, second=0, microsecond=0)
-
-        # If last reset was before 10:30 AM today, then next reset is today at 10:30 AM
-        # But if last reset was after 10:30 AM today, next reset is tomorrow at 10:30 AM
-        if last_reset_dt >= reset_time:
-            reset_time += timedelta(days=1)
-
-        return reset_time.timestamp()
+    def _get_today_str(self):
+        return datetime.now().strftime("%Y-%m-%d")
 
     def _check_reset(self):
         with self._lock:
             now = time.time()
-            # A more robust reset logic:
-            # If current time has passed 10:30 AM and the last reset was before the most recent 10:30 AM, then reset.
-
             current_dt = datetime.fromtimestamp(now)
             today_1030 = current_dt.replace(hour=10, minute=30, second=0, microsecond=0)
 
-            needs_save = False
+            needs_reset = False
             if now >= today_1030.timestamp():
-                # Most recent reset should have been today at 10:30
                 last_reset_dt = datetime.fromtimestamp(self.stats["last_reset"])
                 if last_reset_dt < today_1030:
-                    self.stats["count"] = 0
-                    self.stats["last_reset"] = now # Or today_1030.timestamp()
-                    needs_save = True
+                    needs_reset = True
             else:
-                # Most recent reset should have been yesterday at 10:30
                 yesterday_1030 = today_1030 - timedelta(days=1)
                 last_reset_dt = datetime.fromtimestamp(self.stats["last_reset"])
                 if last_reset_dt < yesterday_1030:
-                    self.stats["count"] = 0
-                    self.stats["last_reset"] = now
-                    needs_save = True
+                    needs_reset = True
 
-            if needs_save:
-                # Can't call self._save_stats() here because it would double-lock
+            if needs_reset:
+                self.stats["count"] = 0
+                self.stats["last_reset"] = now
+
+            # Cleanup old history
+            history = self.stats.get("history", {})
+            if history:
+                cutoff = (datetime.now() - timedelta(days=self.history_days)).strftime("%Y-%m-%d")
+                keys_to_delete = [k for k in history.keys() if k < cutoff]
+                for k in keys_to_delete:
+                    del history[k]
+
+            if needs_reset or (history and keys_to_delete):
                 try:
                     with open(self.filepath, "w") as f:
                         json.dump(self.stats, f)
@@ -85,10 +83,34 @@ class UsageTracker:
             self.stats["count"] += count
         self._save_stats()
 
+    def record_site_usage(self, host, upload_bytes, download_bytes, errored=False):
+        self._check_reset()
+        today = self._get_today_str()
+        with self._lock:
+            history = self.stats.setdefault("history", {})
+            day_data = history.setdefault(today, {"total_requests": 0, "total_upload": 0, "total_download": 0, "hosts": {}})
+
+            day_data["total_requests"] += 1
+            day_data["total_upload"] += upload_bytes
+            day_data["total_download"] += download_bytes
+
+            host_data = day_data["hosts"].setdefault(host, {"requests": 0, "upload": 0, "download": 0, "errors": 0})
+            host_data["requests"] += 1
+            host_data["upload"] += upload_bytes
+            host_data["download"] += download_bytes
+            if errored:
+                host_data["errors"] += 1
+        self._save_stats()
+
     def get_count(self):
         self._check_reset()
         with self._lock:
             return self.stats["count"]
+
+    def get_history(self):
+        self._check_reset()
+        with self._lock:
+            return self.stats.get("history", {})
 
     def get_remaining(self):
         return max(0, self.limit - self.get_count())

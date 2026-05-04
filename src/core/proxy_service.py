@@ -86,3 +86,8 @@ class ProxyService(QObject):
                 "percent": (tracker.get_count() / tracker.limit) * 100 if tracker.limit > 0 else 0
             }
         return None
+
+    def get_detailed_stats(self):
+        if self.server and self.server.fronter and self.server.fronter._usage_tracker:
+            return self.server.fronter._usage_tracker.get_history()
+        return None

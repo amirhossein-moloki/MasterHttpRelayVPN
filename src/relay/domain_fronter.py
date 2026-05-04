@@ -707,8 +707,8 @@ class DomainFronter:
 
     # ── Per-host stats ────────────────────────────────────────────
 
-    def _record_site(self, url: str, bytes_: int, latency_ns: int,
-                     errored: bool) -> None:
+    def _record_site(self, url: str, download_bytes: int, latency_ns: int,
+                     errored: bool, upload_bytes: int = 0) -> None:
         host = self._host_key(url)
         if not host:
             return
@@ -717,10 +717,13 @@ class DomainFronter:
             stat = HostStat()
             self._per_site[host] = stat
         stat.requests += 1
-        stat.bytes += max(0, int(bytes_))
+        stat.bytes += max(0, int(download_bytes))
         stat.total_latency_ns += max(0, int(latency_ns))
         if errored:
             stat.errors += 1
+
+        # Record in persistent usage tracker
+        self._usage_tracker.record_site_usage(host, upload_bytes, download_bytes, errored)
 
     def stats_snapshot(self) -> dict:
         """Return a point-in-time snapshot of traffic + script health."""
@@ -1308,7 +1311,7 @@ class DomainFronter:
                 )
             finally:
                 latency_ns = int((time.perf_counter() - t0) * 1e9)
-                self._record_site(url, 0, latency_ns, errored)
+                self._record_site(url, 0, latency_ns, errored, upload_bytes=len(body))
             # fall through to normal Apps Script relay on failure
 
         t0 = time.perf_counter()
@@ -1343,7 +1346,7 @@ class DomainFronter:
             raise
         finally:
             latency_ns = int((time.perf_counter() - t0) * 1e9)
-            self._record_site(url, len(result), latency_ns, errored)
+            self._record_site(url, len(result), latency_ns, errored, upload_bytes=len(body))
 
     async def _coalesced_submit(self, key: str, payload: dict) -> bytes:
         """Dedup concurrent requests for the same URL (no Range header).

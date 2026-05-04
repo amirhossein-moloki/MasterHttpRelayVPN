@@ -51,6 +51,13 @@ MasterHttpRelayVPN is provided for educational, testing, and research purposes o
 
 ---
 
+## Features
+
+- ⚙️ **Professional Settings:** Modular, categorized settings (Network, Bypass, Presets) with support for saving and loading multiple configuration presets.
+- 🌐 **IP-based Bypass:** Automatic bypass for all Iran IP ranges using an updated GeoIP database, ensuring Iranian traffic stays direct even for non-`.ir` domains hosted in Iran.
+- ✍️ **Manual Bypass:** Define custom IP addresses or CIDR ranges to be bypassed with priority override.
+- 📊 **Usage Monitoring:** Comprehensive dashboard featuring real-time upload/download charts, time-based filtering (Daily, Weekly, Monthly), and Top 10 destination tracking.
+
 ## How It Works
 
 ```
