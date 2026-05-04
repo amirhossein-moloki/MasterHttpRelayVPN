@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import threading
+import json
+import urllib.request
 from typing import Optional, Callable
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -99,3 +101,52 @@ class ProxyService(QObject):
 
     def get_total_usage(self):
         return self.usage_tracker.get_total_stats()
+
+    async def update_bypass_group(self, group_index: int) -> bool:
+        """Fetch updated rules for a bypass group from its update_url."""
+        groups = self.config.get("bypass_groups", [])
+        if group_index < 0 or group_index >= len(groups):
+            return False
+
+        group = groups[group_index]
+        url = group.get("update_url")
+        if not url:
+            return False
+
+        try:
+            log.info(f"Updating bypass group '{group.get('name')}' from {url}")
+
+            # Use run_in_executor to avoid blocking the event loop with synchronous urllib
+            def fetch():
+                with urllib.request.urlopen(url, timeout=15) as response:
+                    return response.read().decode('utf-8')
+
+            loop = asyncio.get_running_loop()
+            content = await loop.run_in_executor(None, fetch)
+
+            # Attempt to parse as JSON first, then fallback to line-separated
+            try:
+                data = json.loads(content)
+                if isinstance(data, list):
+                    new_rules = [str(r) for r in data]
+                elif isinstance(data, dict) and "rules" in data:
+                    new_rules = [str(r) for r in data["rules"]]
+                else:
+                    new_rules = content.strip().splitlines()
+            except json.JSONDecodeError:
+                new_rules = content.strip().splitlines()
+
+            new_rules = [r.strip() for r in new_rules if r.strip()]
+            if new_rules:
+                group["rules"] = new_rules
+                # Save config
+                # Note: This is a bit hacky since ProxyService shouldn't ideally know about ModernUI
+                # but in this project the config is often shared/managed by the UI.
+                # A better way is to have a config manager.
+                # For now, we'll just update the group in memory.
+                # The UI should handle the actual saving to file.
+                return True
+        except Exception as e:
+            log.error(f"Failed to update bypass group '{group.get('name')}': {e}")
+
+        return False

@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QStackedWidget, QListWidget, QListWidgetItem,
     QProgressBar, QTextEdit, QLineEdit, QFormLayout, QCheckBox,
     QFrame, QSizePolicy, QScrollArea, QFileDialog, QComboBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget, QSpinBox
+    QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget, QSpinBox,
+    QInputDialog, QMessageBox, QDialog, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QThread
 from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QTextCursor, QPainter, QPen
@@ -181,6 +182,7 @@ class ModernUI(QMainWindow):
         items = [
             ("Dashboard", "fa5s.tachometer-alt"),
             ("Monitoring", "fa5s.chart-bar"),
+            ("Bypass Groups", "fa5s.layer-group"),
             ("Settings", "fa5s.cog"),
             ("Logs", "fa5s.terminal"),
             ("IP Scanner", "fa5s.search"),
@@ -209,12 +211,14 @@ class ModernUI(QMainWindow):
 
         self.dashboard_page = self._create_dashboard_page()
         self.monitoring_page = self._create_monitoring_page()
+        self.bypass_page = self._create_bypass_page()
         self.settings_page = self._create_settings_page()
         self.logs_page = self._create_logs_page()
         self.scanner_page = self._create_scanner_page()
 
         self.content_stack.addWidget(self.dashboard_page)
         self.content_stack.addWidget(self.monitoring_page)
+        self.content_stack.addWidget(self.bypass_page)
         self.content_stack.addWidget(self.settings_page)
         self.content_stack.addWidget(self.logs_page)
         self.content_stack.addWidget(self.scanner_page)
@@ -328,6 +332,187 @@ class ModernUI(QMainWindow):
 
         layout.addStretch()
         return page
+
+    def _create_bypass_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(20)
+
+        header_layout = QHBoxLayout()
+        header = QLabel("Bypass Groups")
+        header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        header.setStyleSheet("color: white;")
+        header_layout.addWidget(header)
+        header_layout.addStretch()
+
+        btn_add = QPushButton("Add Group")
+        btn_add.setIcon(qta.icon("fa5s.plus", color="white"))
+        btn_add.setStyleSheet("background-color: #2ecc71; color: white; padding: 8px 15px; border-radius: 5px;")
+        btn_add.clicked.connect(self._add_bypass_group)
+        header_layout.addWidget(btn_add)
+        layout.addLayout(header_layout)
+
+        desc = QLabel("Connections matching these rules will bypass the relay and connect directly.")
+        desc.setStyleSheet("color: #b0b0b0;")
+        layout.addWidget(desc)
+
+        self.bypass_groups_table = QTableWidget(0, 5)
+        self.bypass_groups_table.setHorizontalHeaderLabels(["Enabled", "Group Name", "Rules Count", "Update URL", "Actions"])
+        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.bypass_groups_table.setStyleSheet("""
+            QTableWidget { background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333; color: #e0e0e0; gridline-color: #333; }
+            QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 10px; border: 1px solid #333; }
+        """)
+        layout.addWidget(self.bypass_groups_table)
+
+        self._refresh_bypass_table()
+        return page
+
+    def _refresh_bypass_table(self):
+        groups = self.config.get("bypass_groups", [])
+        self.bypass_groups_table.setRowCount(len(groups))
+
+        for i, group in enumerate(groups):
+            # Enabled Checkbox
+            check_widget = QWidget()
+            check_layout = QHBoxLayout(check_widget)
+            check_layout.setContentsMargins(0, 0, 0, 0)
+            check_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cb = QCheckBox()
+            cb.setChecked(group.get("enabled", True))
+            cb.stateChanged.connect(lambda state, idx=i: self._toggle_group_enabled(idx, state))
+            check_layout.addWidget(cb)
+            self.bypass_groups_table.setCellWidget(i, 0, check_widget)
+
+            # Name
+            self.bypass_groups_table.setItem(i, 1, QTableWidgetItem(group.get("name", "Unnamed")))
+
+            # Rules Count
+            count = len(group.get("rules", []))
+            self.bypass_groups_table.setItem(i, 2, QTableWidgetItem(str(count)))
+
+            # Update URL
+            url = group.get("update_url", "")
+            self.bypass_groups_table.setItem(i, 3, QTableWidgetItem(url or "None"))
+
+            # Actions
+            action_widget = QWidget()
+            action_layout = QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(5, 2, 5, 2)
+            action_layout.setSpacing(5)
+
+            btn_edit = QPushButton()
+            btn_edit.setIcon(qta.icon("fa5s.edit", color="white"))
+            btn_edit.setToolTip("Edit Rules")
+            btn_edit.setFixedSize(30, 30)
+            btn_edit.setStyleSheet("background-color: #3498db; border-radius: 5px;")
+            btn_edit.clicked.connect(lambda checked, idx=i: self._edit_bypass_group(idx))
+            action_layout.addWidget(btn_edit)
+
+            if url:
+                btn_update = QPushButton()
+                btn_update.setIcon(qta.icon("fa5s.sync-alt", color="white"))
+                btn_update.setToolTip("Update from URL")
+                btn_update.setFixedSize(30, 30)
+                btn_update.setStyleSheet("background-color: #9b59b6; border-radius: 5px;")
+                btn_update.clicked.connect(lambda checked, idx=i: self._update_group_rules(idx))
+                action_layout.addWidget(btn_update)
+
+            btn_del = QPushButton()
+            btn_del.setIcon(qta.icon("fa5s.trash-alt", color="white"))
+            btn_del.setToolTip("Delete Group")
+            btn_del.setFixedSize(30, 30)
+            btn_del.setStyleSheet("background-color: #e74c3c; border-radius: 5px;")
+            btn_del.clicked.connect(lambda checked, idx=i: self._delete_bypass_group(idx))
+            action_layout.addWidget(btn_del)
+
+            self.bypass_groups_table.setCellWidget(i, 4, action_widget)
+
+    def _add_bypass_group(self):
+        name, ok = QInputDialog.getText(self, "Add Group", "Group Name:")
+        if ok and name:
+            if "bypass_groups" not in self.config:
+                self.config["bypass_groups"] = []
+            self.config["bypass_groups"].append({
+                "name": name,
+                "enabled": True,
+                "rules": [],
+                "update_url": ""
+            })
+            self._save_config()
+            self._refresh_bypass_table()
+
+    def _toggle_group_enabled(self, index, state):
+        groups = self.config.get("bypass_groups", [])
+        if 0 <= index < len(groups):
+            groups[index]["enabled"] = (state == Qt.CheckState.Checked.value)
+            self._save_config()
+
+    def _edit_bypass_group(self, index):
+        groups = self.config.get("bypass_groups", [])
+        if 0 <= index < len(groups):
+            group = groups[index]
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Edit Group: {group['name']}")
+            dialog.setMinimumSize(500, 400)
+            d_layout = QVBoxLayout(dialog)
+
+            form = QFormLayout()
+            edit_name = QLineEdit(group['name'])
+            form.addRow("Name:", edit_name)
+
+            edit_url = QLineEdit(group.get('update_url', ''))
+            form.addRow("Update URL:", edit_url)
+            d_layout.addLayout(form)
+
+            d_layout.addWidget(QLabel("Rules (one per line, supports domains, .suffixes, and IPs/CIDR):"))
+            edit_rules = QTextEdit()
+            edit_rules.setPlainText("\n".join(group.get('rules', [])))
+            d_layout.addWidget(edit_rules)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            d_layout.addWidget(buttons)
+
+            if dialog.exec():
+                group['name'] = edit_name.text()
+                group['update_url'] = edit_url.text()
+                group['rules'] = [r.strip() for r in edit_rules.toPlainText().split("\n") if r.strip()]
+                self._save_config()
+                self._refresh_bypass_table()
+
+    def _delete_bypass_group(self, index):
+        ret = QMessageBox.question(self, "Delete Group", "Are you sure you want to delete this group?",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if ret == QMessageBox.StandardButton.Yes:
+            groups = self.config.get("bypass_groups", [])
+            if 0 <= index < len(groups):
+                groups.pop(index)
+                self._save_config()
+                self._refresh_bypass_table()
+
+    def _update_group_rules(self, index):
+        if not self.proxy_service.is_running:
+            logging.warning("Start the proxy first to enable background updates.")
+            return
+
+        # We need to run the async update_bypass_group in the service
+        async def do_update():
+            success = await self.proxy_service.update_bypass_group(index)
+            if success:
+                self._save_config()
+                # Refresh UI safely from the main thread
+                QTimer.singleShot(0, self._refresh_bypass_table)
+                logging.info(f"Group {index} updated successfully.")
+            else:
+                logging.error(f"Failed to update group {index}.")
+
+        asyncio.run_coroutine_threadsafe(do_update(), self.proxy_service.loop)
 
     def _create_monitoring_page(self):
         page = QWidget()
