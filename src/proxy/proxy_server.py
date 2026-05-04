@@ -47,6 +47,8 @@ from .proxy_support import (
     inject_cors_headers,
     is_ip_literal,
     load_host_rules,
+    load_advanced_rules,
+    host_matches_advanced_rules,
     log_response_summary,
     parse_content_length,
 )
@@ -144,6 +146,13 @@ class ProxyServer:
         self._block_hosts  = load_host_rules(config.get("block_hosts", []))
         self._bypass_hosts = load_host_rules(config.get("bypass_hosts", []))
 
+        # Bypass Groups
+        self._bypass_groups = []
+        for g in config.get("bypass_groups", []):
+            if g.get("enabled", True):
+                rules = load_advanced_rules(g.get("rules", []))
+                self._bypass_groups.append(rules)
+
         # Route YouTube through the relay when requested; the Google frontend
         # IP can enforce SafeSearch on the SNI-rewrite path.
         if config.get("youtube_via_relay", False):
@@ -221,7 +230,12 @@ class ProxyServer:
         h = host.lower().rstrip(".")
         if h == "ir" or h.endswith(".ir"):
             return True
-        return host_matches_rules(host, self._bypass_hosts)
+        if host_matches_rules(host, self._bypass_hosts):
+            return True
+        for group_rules in self._bypass_groups:
+            if host_matches_advanced_rules(host, group_rules):
+                return True
+        return False
 
     def _cache_allowed(self, method: str, url: str,
                        headers: dict | None, body: bytes) -> bool:

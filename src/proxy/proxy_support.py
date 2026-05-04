@@ -24,6 +24,8 @@ __all__ = [
     "has_unsupported_transfer_encoding",
     "load_host_rules",
     "host_matches_rules",
+    "load_advanced_rules",
+    "host_matches_advanced_rules",
     "header_value",
     "should_trace_host",
     "log_response_summary",
@@ -95,6 +97,61 @@ def host_matches_rules(host: str, rules: tuple[set[str], tuple[str, ...]]) -> bo
     if normalized in exact:
         return True
     return any(normalized.endswith(suffix) for suffix in suffixes)
+
+
+def load_advanced_rules(raw) -> tuple[set[str], tuple[str, ...], list[ipaddress.IPv4Network | ipaddress.IPv6Network]]:
+    """Accept a list of host/IP strings; return (exact_set, suffix_tuple, networks_list)."""
+    exact: set[str] = set()
+    suffixes: list[str] = []
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for item in raw or []:
+        entry = str(item).strip().lower().rstrip(".")
+        if not entry:
+            continue
+        # Check if it's a CIDR or IP
+        try:
+            if "/" in entry or (":" in entry and not entry.startswith("[")):
+                # CIDR or plain IPv6 (without brackets)
+                net = ipaddress.ip_network(entry, strict=False)
+                networks.append(net)
+                continue
+            elif re.match(r"^\d+\.\d+\.\d+\.\d+$", entry):
+                # plain IPv4
+                net = ipaddress.ip_network(entry, strict=False)
+                networks.append(net)
+                continue
+        except ValueError:
+            pass
+
+        if entry.startswith("."):
+            suffixes.append(entry)
+        else:
+            exact.add(entry)
+    return exact, tuple(suffixes), networks
+
+
+def host_matches_advanced_rules(host: str, rules: tuple[set[str], tuple[str, ...], list]) -> bool:
+    exact, suffixes, networks = rules
+    normalized = host.lower().rstrip(".")
+
+    # Check domains
+    if normalized in exact:
+        return True
+    if any(normalized.endswith(suffix) for suffix in suffixes):
+        return True
+
+    # Check IPs if the host is an IP literal
+    if networks:
+        try:
+            # Strip brackets from IPv6 for ip_address
+            ip_obj = ipaddress.ip_address(normalized.strip("[]"))
+            for net in networks:
+                if ip_obj in net:
+                    return True
+        except ValueError:
+            pass
+
+    return False
 
 
 def header_value(headers: dict | None, name: str) -> str:
