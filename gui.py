@@ -211,12 +211,17 @@ class ModernUI(QMainWindow):
         quota_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         quota_header.addWidget(quota_title)
         quota_header.addStretch()
-        self.quota_label = QLabel("0 / 20000")
+
+        script_ids = self.config.get("script_ids") or self.config.get("script_id")
+        num_scripts = len(script_ids) if isinstance(script_ids, list) else (1 if script_ids else 0)
+        initial_limit = 20000 * num_scripts if num_scripts > 0 else 20000
+
+        self.quota_label = QLabel(f"0 / {initial_limit}")
         quota_header.addWidget(self.quota_label)
         quota_layout.addLayout(quota_header)
 
         self.quota_progress = QProgressBar()
-        self.quota_progress.setMaximum(20000)
+        self.quota_progress.setMaximum(initial_limit)
         self.quota_progress.setValue(0)
         self.quota_progress.setTextVisible(False)
         self.quota_progress.setStyleSheet("""
@@ -324,6 +329,21 @@ class ModernUI(QMainWindow):
         self.check_lan.setChecked(self.config.get("lan_sharing", False))
         self.check_lan.setStyleSheet(input_style)
         add_form_row("", self.check_lan)
+
+        self.edit_bypass_hosts = QTextEdit()
+        bypass_list = self.config.get("bypass_hosts", [])
+        self.edit_bypass_hosts.setPlainText("\n".join(bypass_list))
+        self.edit_bypass_hosts.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #e0e0e0;
+                border: 1px solid #333;
+                padding: 8px;
+                border-radius: 5px;
+                min-height: 100px;
+            }
+        """)
+        add_form_row("Bypass Hosts\n(one per line):", self.edit_bypass_hosts)
 
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
@@ -438,6 +458,7 @@ class ModernUI(QMainWindow):
         usage = self.proxy_service.get_usage()
         if usage:
             self.quota_label.setText(f"{usage['count']} / {usage['limit']}")
+            self.quota_progress.setMaximum(usage['limit'])
             self.quota_progress.setValue(usage['count'])
             if usage['percent'] > 90:
                 self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #e74c3c; }")
@@ -477,6 +498,10 @@ class ModernUI(QMainWindow):
         except:
             pass
         self.config["lan_sharing"] = self.check_lan.isChecked()
+
+        bypass_text = self.edit_bypass_hosts.toPlainText()
+        self.config["bypass_hosts"] = [h.strip() for h in bypass_text.split("\n") if h.strip()]
+
         self.config["mode"] = "apps_script"
         self._save_config()
 

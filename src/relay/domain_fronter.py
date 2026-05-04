@@ -109,7 +109,8 @@ class DomainFronter:
 
         # Simple execution monitor: log total consumed Apps Script executions.
         self._execution_report_interval = 5.0
-        self._usage_tracker = UsageTracker()
+        total_limit = 20000 * len(self._script_ids)
+        self._usage_tracker = UsageTracker(limit=total_limit)
         self._exec_total = self._usage_tracker.get_count()
         self._execution_task: asyncio.Task | None = None
 

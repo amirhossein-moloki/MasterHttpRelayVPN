@@ -218,6 +218,9 @@ class ProxyServer:
         return host_matches_rules(host, self._block_hosts)
 
     def _is_bypassed(self, host: str) -> bool:
+        h = host.lower().rstrip(".")
+        if h == "ir" or h.endswith(".ir"):
+            return True
         return host_matches_rules(host, self._bypass_hosts)
 
     def _cache_allowed(self, method: str, url: str,
