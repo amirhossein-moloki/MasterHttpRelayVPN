@@ -2,7 +2,10 @@
 config.json
 .env
 
-# CA certificates (generated at runtime, contain private keys)
+# Application Data (DB, CA, etc.)
+data/
+
+# CA certificates (generated at runtime, contain private keys) - legacy
 ca/
 
 # Python

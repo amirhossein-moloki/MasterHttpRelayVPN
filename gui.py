@@ -182,7 +182,7 @@ class ModernUI(QMainWindow):
         items = [
             ("Dashboard", "fa5s.tachometer-alt"),
             ("Monitoring", "fa5s.chart-bar"),
-            ("Bypass Groups", "fa5s.layer-group"),
+            ("Rule Groups", "fa5s.layer-group"),
             ("Settings", "fa5s.cog"),
             ("Logs", "fa5s.terminal"),
             ("IP Scanner", "fa5s.search"),
@@ -340,7 +340,7 @@ class ModernUI(QMainWindow):
         layout.setSpacing(20)
 
         header_layout = QHBoxLayout()
-        header = QLabel("Bypass Groups")
+        header = QLabel("Rule Groups")
         header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         header.setStyleSheet("color: white;")
         header_layout.addWidget(header)
@@ -353,15 +353,16 @@ class ModernUI(QMainWindow):
         header_layout.addWidget(btn_add)
         layout.addLayout(header_layout)
 
-        desc = QLabel("Connections matching these rules will bypass the relay and connect directly.")
+        desc = QLabel("Connections matching these rules will follow the assigned mode (Direct, Block, or Relay).")
         desc.setStyleSheet("color: #b0b0b0;")
         layout.addWidget(desc)
 
-        self.bypass_groups_table = QTableWidget(0, 5)
-        self.bypass_groups_table.setHorizontalHeaderLabels(["Enabled", "Group Name", "Rules Count", "Update URL", "Actions"])
+        self.bypass_groups_table = QTableWidget(0, 6)
+        self.bypass_groups_table.setHorizontalHeaderLabels(["Enabled", "Group Name", "Mode", "Rules Count", "Update URL", "Actions"])
         self.bypass_groups_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.bypass_groups_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.bypass_groups_table.setStyleSheet("""
             QTableWidget { background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333; color: #e0e0e0; gridline-color: #333; }
             QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 10px; border: 1px solid #333; }
@@ -372,7 +373,7 @@ class ModernUI(QMainWindow):
         return page
 
     def _refresh_bypass_table(self):
-        groups = self.config.get("bypass_groups", [])
+        groups = self.config.get("rule_groups") or self.config.get("bypass_groups") or []
         self.bypass_groups_table.setRowCount(len(groups))
 
         for i, group in enumerate(groups):
@@ -390,13 +391,17 @@ class ModernUI(QMainWindow):
             # Name
             self.bypass_groups_table.setItem(i, 1, QTableWidgetItem(group.get("name", "Unnamed")))
 
+            # Mode
+            mode = group.get("mode", "direct").capitalize()
+            self.bypass_groups_table.setItem(i, 2, QTableWidgetItem(mode))
+
             # Rules Count
             count = len(group.get("rules", []))
-            self.bypass_groups_table.setItem(i, 2, QTableWidgetItem(str(count)))
+            self.bypass_groups_table.setItem(i, 3, QTableWidgetItem(str(count)))
 
             # Update URL
             url = group.get("update_url", "")
-            self.bypass_groups_table.setItem(i, 3, QTableWidgetItem(url or "None"))
+            self.bypass_groups_table.setItem(i, 4, QTableWidgetItem(url or "None"))
 
             # Actions
             action_widget = QWidget()
@@ -429,16 +434,18 @@ class ModernUI(QMainWindow):
             btn_del.clicked.connect(lambda checked, idx=i: self._delete_bypass_group(idx))
             action_layout.addWidget(btn_del)
 
-            self.bypass_groups_table.setCellWidget(i, 4, action_widget)
+            self.bypass_groups_table.setCellWidget(i, 5, action_widget)
 
     def _add_bypass_group(self):
         name, ok = QInputDialog.getText(self, "Add Group", "Group Name:")
         if ok and name:
-            if "bypass_groups" not in self.config:
-                self.config["bypass_groups"] = []
-            self.config["bypass_groups"].append({
+            if "rule_groups" not in self.config:
+                self.config["rule_groups"] = self.config.get("bypass_groups", [])
+                if "bypass_groups" in self.config: del self.config["bypass_groups"]
+            self.config["rule_groups"].append({
                 "name": name,
                 "enabled": True,
+                "mode": "direct",
                 "rules": [],
                 "update_url": ""
             })
@@ -446,24 +453,29 @@ class ModernUI(QMainWindow):
             self._refresh_bypass_table()
 
     def _toggle_group_enabled(self, index, state):
-        groups = self.config.get("bypass_groups", [])
+        groups = self.config.get("rule_groups") or self.config.get("bypass_groups") or []
         if 0 <= index < len(groups):
             groups[index]["enabled"] = (state == Qt.CheckState.Checked.value)
             self._save_config()
 
     def _edit_bypass_group(self, index):
-        groups = self.config.get("bypass_groups", [])
+        groups = self.config.get("rule_groups") or self.config.get("bypass_groups") or []
         if 0 <= index < len(groups):
             group = groups[index]
 
             dialog = QDialog(self)
             dialog.setWindowTitle(f"Edit Group: {group['name']}")
-            dialog.setMinimumSize(500, 400)
+            dialog.setMinimumSize(500, 450)
             d_layout = QVBoxLayout(dialog)
 
             form = QFormLayout()
             edit_name = QLineEdit(group['name'])
             form.addRow("Name:", edit_name)
+
+            edit_mode = QComboBox()
+            edit_mode.addItems(["Direct", "Block", "Relay"])
+            edit_mode.setCurrentText(group.get("mode", "direct").capitalize())
+            form.addRow("Mode:", edit_mode)
 
             edit_url = QLineEdit(group.get('update_url', ''))
             form.addRow("Update URL:", edit_url)
@@ -481,8 +493,13 @@ class ModernUI(QMainWindow):
 
             if dialog.exec():
                 group['name'] = edit_name.text()
+                group['mode'] = edit_mode.currentText().lower()
                 group['update_url'] = edit_url.text()
                 group['rules'] = [r.strip() for r in edit_rules.toPlainText().split("\n") if r.strip()]
+                # Migrate to rule_groups if not already
+                if "bypass_groups" in self.config:
+                    self.config["rule_groups"] = groups
+                    del self.config["bypass_groups"]
                 self._save_config()
                 self._refresh_bypass_table()
 
@@ -490,9 +507,12 @@ class ModernUI(QMainWindow):
         ret = QMessageBox.question(self, "Delete Group", "Are you sure you want to delete this group?",
                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if ret == QMessageBox.StandardButton.Yes:
-            groups = self.config.get("bypass_groups", [])
+            groups = self.config.get("rule_groups") or self.config.get("bypass_groups") or []
             if 0 <= index < len(groups):
                 groups.pop(index)
+                if "bypass_groups" in self.config:
+                    self.config["rule_groups"] = groups
+                    del self.config["bypass_groups"]
                 self._save_config()
                 self._refresh_bypass_table()
 
@@ -543,9 +563,10 @@ class ModernUI(QMainWindow):
         table_header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         table_layout.addWidget(table_header)
 
-        self.usage_table = QTableWidget(0, 4)
-        self.usage_table.setHorizontalHeaderLabels(["Host", "Upload", "Download", "Total"])
+        self.usage_table = QTableWidget(0, 5)
+        self.usage_table.setHorizontalHeaderLabels(["Host", "Requests", "Upload", "Download", "Total"])
         self.usage_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.usage_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.usage_table.setStyleSheet("""
             QTableWidget { background-color: transparent; border: none; color: #e0e0e0; gridline-color: #333; }
             QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 5px; border: 1px solid #333; }
@@ -642,6 +663,12 @@ class ModernUI(QMainWindow):
         self.edit_google_ip = QLineEdit(self.config.get("google_ip", "216.239.38.120"))
         self.edit_google_ip.setStyleSheet(input_style)
         add_row(general_f, "Google Frontend IP:", self.edit_google_ip)
+
+        self.edit_default_mode = QComboBox()
+        self.edit_default_mode.addItems(["Relay", "Direct", "Block"])
+        self.edit_default_mode.setCurrentText(self.config.get("default_connection_mode", "relay").capitalize())
+        self.edit_default_mode.setStyleSheet("background-color: #121212; color: #e0e0e0; border: 1px solid #333; padding: 5px; border-radius: 5px;")
+        add_row(general_f, "Default Connection Mode:", self.edit_default_mode)
 
         tabs.addTab(general_w, "General")
 
@@ -817,9 +844,10 @@ class ModernUI(QMainWindow):
             self.usage_table.setRowCount(len(top_hosts))
             for i, h in enumerate(top_hosts):
                 self.usage_table.setItem(i, 0, QTableWidgetItem(h['host']))
-                self.usage_table.setItem(i, 1, QTableWidgetItem(f"{h['sent']/1024/1024:.2f} MB"))
-                self.usage_table.setItem(i, 2, QTableWidgetItem(f"{h['received']/1024/1024:.2f} MB"))
-                self.usage_table.setItem(i, 3, QTableWidgetItem(f"{h['total']/1024/1024:.2f} MB"))
+                self.usage_table.setItem(i, 1, QTableWidgetItem(str(h.get('requests', 0))))
+                self.usage_table.setItem(i, 2, QTableWidgetItem(f"{h['sent']/1024/1024:.2f} MB"))
+                self.usage_table.setItem(i, 3, QTableWidgetItem(f"{h['received']/1024/1024:.2f} MB"))
+                self.usage_table.setItem(i, 4, QTableWidgetItem(f"{h['total']/1024/1024:.2f} MB"))
 
             # Update History Chart
             history = usage.get("history", [])
@@ -859,6 +887,7 @@ class ModernUI(QMainWindow):
         self.config["script_id"] = self.edit_script_id.text()
         self.config["auth_key"] = self.edit_auth_key.text()
         self.config["google_ip"] = self.edit_google_ip.text()
+        self.config["default_connection_mode"] = self.edit_default_mode.currentText().lower()
         try:
             self.config["listen_port"] = int(self.edit_listen_port.text())
             self.config["socks5_port"] = int(self.edit_socks_port.text())
@@ -921,6 +950,13 @@ class ModernUI(QMainWindow):
         self.scan_btn.setEnabled(True)
         # Capture stdout from scan_sync might be tricky, but we can at least show it finished.
         self.scanner_results.append("\nScan complete. Check the Logs tab for detailed results.")
+
+    def closeEvent(self, event):
+        """Ensure proxy stops when the window is closed."""
+        if self.proxy_service.is_running:
+            logging.info("Closing window, stopping proxy...")
+            self.proxy_service.stop()
+        event.accept()
 
 def main():
     app = QApplication(sys.argv)

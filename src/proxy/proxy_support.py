@@ -130,8 +130,27 @@ def load_advanced_rules(raw) -> tuple[set[str], tuple[str, ...], list[ipaddress.
     return exact, tuple(suffixes), networks
 
 
-def host_matches_advanced_rules(host: str, rules: tuple[set[str], tuple[str, ...], list]) -> bool:
-    exact, suffixes, networks = rules
+def load_rule_group(group_config: dict) -> dict:
+    """Parse a rule group configuration into a structured object for matching."""
+    rules = group_config.get("rules", [])
+    exact, suffixes, networks = load_advanced_rules(rules)
+    return {
+        "name": group_config.get("name", "Unnamed"),
+        "mode": group_config.get("mode", "direct"), # 'direct', 'block', 'relay'
+        "exact": exact,
+        "suffixes": suffixes,
+        "networks": networks,
+        "enabled": group_config.get("enabled", True)
+    }
+
+
+def host_matches_advanced_rules(host: str, rules: tuple[set[str], tuple[str, ...], list] | dict) -> bool:
+    if isinstance(rules, dict):
+        exact = rules["exact"]
+        suffixes = rules["suffixes"]
+        networks = rules["networks"]
+    else:
+        exact, suffixes, networks = rules
     normalized = host.lower().rstrip(".")
 
     # Check domains

@@ -292,9 +292,33 @@ def main():
         log_lan_access(config.get("listen_port", 8080), socks_port)
 
     try:
-        asyncio.run(_run(config))
+        import signal
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Signal handlers for clean shutdown on SIGINT/SIGTERM
+        def _on_signal():
+            log.info("Interrupt received, shutting down...")
+            for task in asyncio.all_tasks(loop):
+                task.cancel()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _on_signal)
+            except (NotImplementedError, AttributeError):
+                # add_signal_handler not supported on Windows
+                pass
+
+        loop.run_until_complete(_run(config))
     except KeyboardInterrupt:
-        log.info("Stopped")
+        log.info("Stopped via KeyboardInterrupt")
+    except asyncio.CancelledError:
+        log.info("Stopped via Cancellation")
+    finally:
+        try:
+            loop.close()
+        except:
+            pass
 
 
 def _make_exception_handler(log):
