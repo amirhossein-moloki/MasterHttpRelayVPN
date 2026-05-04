@@ -222,11 +222,21 @@ Production recommendation:
 
 ### Step 4: Run
 
+**Option A — Command Line:**
 ```bash
 python3 main.py
 ```
-
 You should see a message saying the HTTP proxy is running on `127.0.0.1:8085` and SOCKS5 on `127.0.0.1:1080`.
+
+**Option B — Graphical User Interface (GUI):**
+```bash
+python3 main.py --gui
+```
+Or directly:
+```bash
+python3 gui.py
+```
+The GUI provides a dashboard, easy settings management, system logs, and a built-in Google IP scanner.
 
 ### Step 5: Set Up Your Browser
 
@@ -400,6 +410,7 @@ python3 main.py --install-cert           # Install MITM CA certificate and exit
 python3 main.py --uninstall-cert         # Remove MITM CA certificate and exit
 python3 main.py --no-cert-check          # Skip automatic CA install check on startup
 python3 main.py --scan                   # Scan Google IPs and find the fastest one
+python3 main.py --gui                    # Start the Graphical User Interface
 ```
 
 > **Auto-install:** On startup (MITM mode), the proxy automatically checks if the CA certificate is trusted and attempts to install it. Use `--no-cert-check` to skip this. If auto-install fails (e.g. needs elevation), run `python main.py --install-cert` manually or follow Step 6 above.

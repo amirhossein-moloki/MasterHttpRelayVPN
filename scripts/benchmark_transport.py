@@ -176,42 +176,46 @@ async def _probe_h2_fresh(host_ip: str, sni: str, path: str, timeout: float) -> 
 
 # ── HTTP/3 (QUIC) probe ───────────────────────────────────────────────────
 
-class _H3ProbeProtocol(quic_asyncio.QuicConnectionProtocol):
-    """Minimal aioquic protocol that sends one H3 GET and captures the result."""
+if H3_AVAILABLE:
+    class _H3ProbeProtocol(quic_asyncio.QuicConnectionProtocol):
+        """Minimal aioquic protocol that sends one H3 GET and captures the result."""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._h3: h3c.H3Connection | None = None
-        self._done: asyncio.Future[float] = asyncio.get_event_loop().create_future()
-        self._t0: float = time.perf_counter()
-        self._stream_id: int | None = None
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._h3: h3c.H3Connection | None = None
+            self._done: asyncio.Future[float] = asyncio.get_event_loop().create_future()
+            self._t0: float = time.perf_counter()
+            self._stream_id: int | None = None
 
-    def quic_event_received(self, event):
-        if isinstance(event, quic_events.HandshakeCompleted):
-            self._h3 = h3c.H3Connection(self._quic, enable_webtransport=False)
-        if self._h3 is None:
-            return
-        for h3ev in self._h3.handle_event(event):
-            if isinstance(h3ev, h3e.HeadersReceived):
-                if not self._done.done():
-                    self._done.set_result(time.perf_counter() - self._t0)
-            elif isinstance(h3ev, h3e.DataReceived):
-                pass  # don't need body
+        def quic_event_received(self, event):
+            if isinstance(event, quic_events.HandshakeCompleted):
+                self._h3 = h3c.H3Connection(self._quic, enable_webtransport=False)
+            if self._h3 is None:
+                return
+            for h3ev in self._h3.handle_event(event):
+                if isinstance(h3ev, h3e.HeadersReceived):
+                    if not self._done.done():
+                        self._done.set_result(time.perf_counter() - self._t0)
+                elif isinstance(h3ev, h3e.DataReceived):
+                    pass  # don't need body
 
-    def send_request(self, sni: str, path: str):
-        self._stream_id = self._quic.get_next_available_stream_id()
-        self._h3.send_headers(
-            stream_id=self._stream_id,
-            headers=[
-                (b":method", b"GET"),
-                (b":path", path.encode()),
-                (b":scheme", b"https"),
-                (b":authority", sni.encode()),
-                (b"accept", b"*/*"),
-            ],
-            end_stream=True,
-        )
-        self.transmit()
+        def send_request(self, sni: str, path: str):
+            self._stream_id = self._quic.get_next_available_stream_id()
+            self._h3.send_headers(
+                stream_id=self._stream_id,
+                headers=[
+                    (b":method", b"GET"),
+                    (b":path", path.encode()),
+                    (b":scheme", b"https"),
+                    (b":authority", sni.encode()),
+                    (b"accept", b"*/*"),
+                ],
+                end_stream=True,
+            )
+            self.transmit()
+else:
+    class _H3ProbeProtocol:
+        pass
 
 
 async def _h3_inner(host_ip: str, sni: str, path: str, timeout: float) -> float:
