@@ -25,7 +25,7 @@ from core.constants import __version__
 from core.lan_utils import log_lan_access
 from core.google_ip_scanner import scan_sync
 from core.logging_utils import configure as configure_logging, print_banner
-from proxy.mitm import CA_CERT_FILE
+from core.paths import CA_CERT_FILE
 from proxy.proxy_server import ProxyServer
 
 

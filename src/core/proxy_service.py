@@ -8,6 +8,7 @@ from typing import Optional, Callable
 from PyQt6.QtCore import QObject, pyqtSignal
 from proxy.proxy_server import ProxyServer
 from core.usage_tracker import UsageTracker
+from core.paths import USAGE_DB_PATH, ensure_dirs
 
 log = logging.getLogger("ProxyService")
 
@@ -27,11 +28,10 @@ class ProxyService(QObject):
         num_scripts = len(script_ids) if isinstance(script_ids, list) else (1 if script_ids else 0)
         total_limit = 20000 * num_scripts if num_scripts > 0 else 20000
         # Ensure data directory exists
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
-        os.makedirs(data_dir, exist_ok=True)
+        ensure_dirs()
 
         self.usage_tracker = UsageTracker(
-            db_path=self.config.get("usage_db", os.path.join(data_dir, "usage_stats.db")),
+            db_path=self.config.get("usage_db", USAGE_DB_PATH),
             limit=total_limit
         )
 
