@@ -229,7 +229,7 @@ class ProxyServer:
                 return False
         return self.fronter._is_static_asset_url(url)
 
-    async def start(self):
+    async def start(self, on_ready=None):
         if self._warmup_before_listen:
             log.info(
                 "Relay warmup in progress... waiting up to %.0fs before opening listeners",
@@ -245,6 +245,8 @@ class ProxyServer:
                 )
 
         http_srv = await asyncio.start_server(self._on_client, self.host, self.port)
+        if on_ready:
+            on_ready()
         socks_srv = None
 
         if self.socks_enabled:
