@@ -76,13 +76,15 @@ class ProxyService(QObject):
             return self.server.fronter.stats_snapshot()
         return None
 
-    def get_usage(self):
+    def get_usage(self, days=1):
         if self.server and self.server.fronter and self.server.fronter._usage_tracker:
             tracker = self.server.fronter._usage_tracker
             return {
                 "count": tracker.get_count(),
                 "limit": tracker.limit,
                 "remaining": tracker.get_remaining(),
-                "percent": (tracker.get_count() / tracker.limit) * 100 if tracker.limit > 0 else 0
+                "percent": (tracker.get_count() / tracker.limit) * 100 if tracker.limit > 0 else 0,
+                "top_hosts": tracker.get_top_hosts(limit=10, days=days),
+                "history": tracker.get_history(days=7 if days <= 7 else days)
             }
         return None

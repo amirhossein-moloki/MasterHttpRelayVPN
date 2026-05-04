@@ -110,7 +110,7 @@ class DomainFronter:
         # Simple execution monitor: log total consumed Apps Script executions.
         self._execution_report_interval = 5.0
         total_limit = 20000 * len(self._script_ids)
-        self._usage_tracker = UsageTracker(limit=total_limit)
+        self._usage_tracker = UsageTracker(db_path=config.get("usage_db", "usage_stats.db"), limit=total_limit)
         self._exec_total = self._usage_tracker.get_count()
         self._execution_task: asyncio.Task | None = None
 
@@ -707,8 +707,8 @@ class DomainFronter:
 
     # ── Per-host stats ────────────────────────────────────────────
 
-    def _record_site(self, url: str, bytes_: int, latency_ns: int,
-                     errored: bool) -> None:
+    def _record_site(self, url: str, bytes_sent: int, bytes_received: int,
+                     latency_ns: int, errored: bool) -> None:
         host = self._host_key(url)
         if not host:
             return
@@ -717,10 +717,12 @@ class DomainFronter:
             stat = HostStat()
             self._per_site[host] = stat
         stat.requests += 1
-        stat.bytes += max(0, int(bytes_))
+        stat.bytes += max(0, int(bytes_received))
         stat.total_latency_ns += max(0, int(latency_ns))
         if errored:
             stat.errors += 1
+
+        self._usage_tracker.add_traffic(host, bytes_sent, bytes_received)
 
     def stats_snapshot(self) -> dict:
         """Return a point-in-time snapshot of traffic + script health."""
@@ -1295,11 +1297,13 @@ class DomainFronter:
         if self._exit_node_matches(url):
             t0 = time.perf_counter()
             errored = False
+            result_exit = b""
             try:
-                return await asyncio.wait_for(
+                result_exit = await asyncio.wait_for(
                     self._relay_via_exit_node(payload),
                     timeout=self._relay_timeout + self._tls_connect_timeout,
                 )
+                return result_exit
             except Exception as exc:
                 errored = True
                 log.warning(
@@ -1308,7 +1312,7 @@ class DomainFronter:
                 )
             finally:
                 latency_ns = int((time.perf_counter() - t0) * 1e9)
-                self._record_site(url, 0, latency_ns, errored)
+                self._record_site(url, len(body), len(result_exit), latency_ns, errored)
             # fall through to normal Apps Script relay on failure
 
         t0 = time.perf_counter()
@@ -1343,7 +1347,7 @@ class DomainFronter:
             raise
         finally:
             latency_ns = int((time.perf_counter() - t0) * 1e9)
-            self._record_site(url, len(result), latency_ns, errored)
+            self._record_site(url, len(body), len(result), latency_ns, errored)
 
     async def _coalesced_submit(self, key: str, payload: dict) -> bytes:
         """Dedup concurrent requests for the same URL (no Range header).
@@ -1408,6 +1412,23 @@ class DomainFronter:
         if method != "GET" or body:
             return await self.relay(method, url, headers, body)
 
+        t0 = time.perf_counter()
+        errored = False
+        full_body = b""
+        try:
+            res = await self._relay_parallel_impl(
+                url, headers, chunk_size, max_parallel, max_chunks, min_size, t0
+            )
+            full_body = res
+            return res
+        except Exception:
+            errored = True
+            raise
+        finally:
+            latency_ns = int((time.perf_counter() - t0) * 1e9)
+            self._record_site(url, len(body), len(full_body), latency_ns, errored)
+
+    async def _relay_parallel_impl(self, url, headers, chunk_size, max_parallel, max_chunks, min_size, t0_outer) -> bytes:
         # Probe: first chunk with Range header
         first_resp = await self._range_probe(url, headers, 0, chunk_size - 1)
 
@@ -1576,6 +1597,24 @@ class DomainFronter:
                                        max_parallel: int = 8,
                                        max_chunks: int = 256,
                                        min_size: int = 0) -> bool:
+        t0 = time.perf_counter()
+        errored = False
+        bytes_received = 0
+        try:
+            # We need to wrap the implementation to track bytes and errors
+            success, total_bytes = await self._stream_parallel_impl(
+                url, headers, writer, chunk_size, max_parallel, max_chunks, min_size, t0
+            )
+            bytes_received = total_bytes
+            return success
+        except Exception:
+            errored = True
+            raise
+        finally:
+            latency_ns = int((time.perf_counter() - t0) * 1e9)
+            self._record_site(url, 0, bytes_received, latency_ns, errored)
+
+    async def _stream_parallel_impl(self, url, headers, writer, chunk_size, max_parallel, max_chunks, min_size, t0) -> tuple[bool, int]:
         """Stream a large range-capable download to the client incrementally.
 
         Returns False when the target should fall back to the normal relay
@@ -1591,7 +1630,7 @@ class DomainFronter:
                 "Streaming download fallback: initial probe returned %s for %s",
                 status, url[:80],
             )
-            return False
+            return False, 0
 
         parsed_range = parse_content_range(resp_hdrs.get("content-range", ""))
         if not parsed_range:
@@ -1599,7 +1638,7 @@ class DomainFronter:
                 "Streaming download fallback: missing/invalid Content-Range for %s",
                 url[:80],
             )
-            return False
+            return False, 0
         first_start, first_end, total_size = parsed_range
         first_err = validate_range_response(
             status, resp_hdrs, resp_body, first_start, first_end, total_size,
@@ -1610,13 +1649,13 @@ class DomainFronter:
                 first_err or f"start={first_start}",
                 url[:80],
             )
-            return False
+            return False, 0
         if min_size > 0 and total_size < min_size:
             log.info(
                 "Streaming download fallback: file too small (%d < %d) for %s",
                 total_size, min_size, url[:80],
             )
-            return False
+            return False, 0
         if max_chunks > 0:
             required_chunk_size = max(
                 chunk_size,
@@ -1636,7 +1675,7 @@ class DomainFronter:
             writer.write(self._render_streaming_headers(resp_hdrs, total_size))
             writer.write(resp_body)
             await writer.drain()
-            return True
+            return True, total_size
 
         ranges = []
         start = len(resp_body)
@@ -1759,11 +1798,11 @@ class DomainFronter:
                     speed_bytes_per_sec=total_size / elapsed,
                 ),
             )
-            return True
+            return True, total_size
         except (ConnectionError, BrokenPipeError, TimeoutError) as exc:
             log.info("Parallel download cancelled by client: %s", exc)
             cancel_event.set()
-            return True
+            return True, delivered_bytes
         except Exception as exc:
             self._mark_stream_download_failure(url, str(exc))
             log.error("Parallel streaming download failed (%s): %s", url[:60], exc)
@@ -1773,7 +1812,7 @@ class DomainFronter:
                     writer.close()
             except Exception:
                 pass
-            return True
+            return True, delivered_bytes
         finally:
             cancel_event.set()
             for task in tasks:
