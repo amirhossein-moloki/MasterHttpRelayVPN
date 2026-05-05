@@ -96,6 +96,11 @@ def host_matches_rules(host: str, rules: tuple[set[str], tuple[str, ...]]) -> bo
     normalized = host.lower().rstrip(".")
     if normalized in exact:
         return True
+    # If "example.com" is in exact, it should also match "*.example.com"
+    parts = normalized.split(".")
+    for i in range(1, len(parts)):
+        if ".".join(parts[i:]) in exact:
+            return True
     return any(normalized.endswith(suffix) for suffix in suffixes)
 
 
@@ -156,6 +161,11 @@ def host_matches_advanced_rules(host: str, rules: tuple[set[str], tuple[str, ...
     # Check domains
     if normalized in exact:
         return True
+    # If "example.com" is in exact, it should also match "*.example.com"
+    parts = normalized.split(".")
+    for i in range(1, len(parts)):
+        if ".".join(parts[i:]) in exact:
+            return True
     if any(normalized.endswith(suffix) for suffix in suffixes):
         return True
 
