@@ -12,10 +12,10 @@ from PyQt6.QtWidgets import (
     QProgressBar, QTextEdit, QLineEdit, QFormLayout, QCheckBox,
     QFrame, QSizePolicy, QScrollArea, QFileDialog, QComboBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget, QSpinBox,
-    QInputDialog, QMessageBox, QDialog, QDialogButtonBox
+    QInputDialog, QMessageBox, QDialog, QDialogButtonBox, QGraphicsOpacityEffect
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QThread
-from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QTextCursor, QPainter, QPen
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QThread, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QFont, QIcon, QColor, QPalette, QTextCursor, QPainter, QPen, QBrush
 import qtawesome as qta
 
 # Ensure src is in sys.path
@@ -25,12 +25,158 @@ from core.proxy_service import ProxyService
 from core.constants import __version__
 from core.google_ip_scanner import scan_sync
 
+# Design Constants
+STYLE_SHEET = """
+    QMainWindow { background-color: #0A0A0A; }
+    QWidget { font-family: 'Inter', 'Segoe UI', 'Roboto', 'Arial'; }
+
+    /* Sidebar */
+    #Sidebar { background-color: #111111; border-right: 1px solid #222; }
+    QListWidget#NavList { border: none; background-color: transparent; outline: none; }
+
+    /* Scrollbars */
+    QScrollBar:vertical {
+        border: none;
+        background: #111;
+        width: 10px;
+        margin: 0px;
+    }
+    QScrollBar::handle:vertical {
+        background: #333;
+        min-height: 20px;
+        border-radius: 5px;
+    }
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        border: none;
+        background: none;
+    }
+    QListWidget#NavList::item {
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin: 4px 8px;
+        color: #888;
+        font-weight: 500;
+    }
+    QListWidget#NavList::item:selected {
+        background-color: #1A1A1A;
+        color: #FFFFFF;
+        border: 1px solid #333;
+    }
+    QListWidget#NavList::item:hover:!selected {
+        background-color: #161616;
+        color: #BBB;
+    }
+
+    /* Cards */
+    QFrame.Card {
+        background-color: #141414;
+        border-radius: 12px;
+        border: 1px solid #252525;
+    }
+    QFrame.Card:hover {
+        border: 1px solid #353535;
+    }
+
+    /* Buttons */
+    QPushButton {
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 13px;
+        border: 1px solid transparent;
+    }
+    QPushButton#PrimaryAction {
+        background-color: #2D63ED;
+        color: white;
+    }
+    QPushButton#PrimaryAction:hover {
+        background-color: #3D73FD;
+    }
+    QPushButton#StopAction {
+        background-color: #E03131;
+        color: white;
+    }
+    QPushButton#StopAction:hover {
+        background-color: #F04141;
+    }
+    QPushButton#SecondaryAction {
+        background-color: #222;
+        color: #EEE;
+        border: 1px solid #333;
+    }
+    QPushButton#SecondaryAction:hover {
+        background-color: #2A2A2A;
+    }
+
+    /* Inputs */
+    QLineEdit, QSpinBox, QComboBox, QTextEdit {
+        background-color: #111;
+        color: #EEE;
+        border: 1px solid #222;
+        padding: 10px;
+        border-radius: 8px;
+        selection-background-color: #2D63ED;
+    }
+    QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus {
+        border: 1px solid #444;
+        background-color: #141414;
+    }
+
+    /* Tables */
+    QTableWidget {
+        background-color: transparent;
+        border: none;
+        color: #DDD;
+        gridline-color: #222;
+        outline: none;
+    }
+    QHeaderView::section {
+        background-color: #161616;
+        color: #999;
+        padding: 12px;
+        border: none;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 11px;
+        letter-spacing: 0.5px;
+    }
+    QTableWidget::item { padding: 12px; }
+
+    /* Tabs */
+    QTabWidget::pane { border: 1px solid #222; background: #141414; border-radius: 8px; top: -1px; }
+    QTabBar::tab {
+        background: transparent;
+        color: #777;
+        padding: 12px 24px;
+        font-weight: 600;
+        border-bottom: 2px solid transparent;
+    }
+    QTabBar::tab:selected {
+        color: #2D63ED;
+        border-bottom: 2px solid #2D63ED;
+    }
+    QTabBar::tab:hover:!selected { color: #BBB; }
+
+    /* Progress Bar */
+    QProgressBar {
+        height: 8px;
+        border-radius: 4px;
+        background-color: #1A1A1A;
+        text-align: center;
+        border: none;
+    }
+    QProgressBar::chunk {
+        background-color: #2D63ED;
+        border-radius: 4px;
+    }
+"""
+
 # Setup Logging for UI
 class UsageChart(QWidget):
     def __init__(self):
         super().__init__()
         self.data = []  # List of {"day": str, "sent": int, "received": int}
-        self.setMinimumHeight(200)
+        self.setMinimumHeight(220)
 
     def setData(self, data):
         self.data = data
@@ -45,47 +191,50 @@ class UsageChart(QWidget):
 
         width = self.width()
         height = self.height()
-        padding = 40
+        padding_x = 50
+        padding_y = 40
 
-        chart_width = width - 2 * padding
-        chart_height = height - 2 * padding
+        chart_width = width - 2 * padding_x
+        chart_height = height - 2 * padding_y
 
         max_val = max((d['sent'] + d['received']) for d in self.data) if self.data else 1
         if max_val == 0: max_val = 1
 
         num_days = len(self.data)
-        bar_width = (chart_width / num_days) * 0.6 if num_days > 0 else 0
-        spacing = (chart_width / num_days) * 0.4 if num_days > 0 else 0
+        bar_width = (chart_width / num_days) * 0.5 if num_days > 0 else 0
+        spacing = (chart_width / num_days) * 0.5 if num_days > 0 else 0
 
-        # Draw axes
-        painter.setPen(QPen(QColor("#555"), 2))
-        painter.drawLine(padding, height - padding, width - padding, height - padding)
-        painter.drawLine(padding, padding, padding, height - padding)
+        # Draw Grid Lines
+        painter.setPen(QPen(QColor("#222"), 1))
+        for i in range(5):
+            y_line = height - padding_y - (i * chart_height / 4)
+            painter.drawLine(padding_x, int(y_line), width - padding_x, int(y_line))
 
         # Draw bars
         for i, day in enumerate(self.data):
             total = day['sent'] + day['received']
             h = (total / max_val) * chart_height
 
-            x = padding + i * (bar_width + spacing) + spacing / 2
-            y = height - padding - h
+            x = padding_x + i * (bar_width + spacing) + spacing / 2
+            y = height - padding_y - h
 
             # Received bar (bottom)
             h_rec = (day['received'] / max_val) * chart_height
-            painter.setBrush(QColor("#3498db"))
+            painter.setBrush(QBrush(QColor("#2D63ED")))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRect(int(x), int(height - padding - h_rec), int(bar_width), int(h_rec))
+            painter.drawRoundedRect(int(x), int(height - padding_y - h_rec), int(bar_width), int(h_rec), 4, 4)
 
             # Sent bar (top)
-            h_sent = (day['sent'] / max_val) * chart_height
-            painter.setBrush(QColor("#2ecc71"))
-            painter.drawRect(int(x), int(height - padding - h_rec - h_sent), int(bar_width), int(h_sent))
+            if day['sent'] > 0:
+                h_sent = (day['sent'] / max_val) * chart_height
+                painter.setBrush(QBrush(QColor("#00BFA5")))
+                painter.drawRoundedRect(int(x), int(height - padding_y - h_rec - h_sent), int(bar_width), int(h_sent), 4, 4)
 
             # Label
-            painter.setPen(QColor("#b0b0b0"))
-            painter.setFont(QFont("Arial", 8))
+            painter.setPen(QColor("#666"))
+            painter.setFont(QFont("Inter", 8, QFont.Weight.Medium))
             label = day['day'][-5:] # MM-DD
-            painter.drawText(int(x), height - padding + 20, label)
+            painter.drawText(int(x), height - padding_y + 20, int(bar_width), 20, Qt.AlignmentFlag.AlignCenter, label)
 
 class QtLogHandler(logging.Handler, QObject):
     new_log = pyqtSignal(str, str)
@@ -123,24 +272,12 @@ class ScriptIdItem(QWidget):
 
         self.edit = QLineEdit(script_id)
         self.edit.setPlaceholderText("Enter Apps Script ID")
-        self.edit.setStyleSheet("""
-            QLineEdit {
-                background-color: #121212;
-                color: #e0e0e0;
-                border: 1px solid #333;
-                padding: 8px;
-                border-radius: 5px;
-            }
-        """)
         layout.addWidget(self.edit)
 
         self.del_btn = QPushButton()
         self.del_btn.setIcon(qta.icon("fa5s.trash-alt", color="#e74c3c"))
-        self.del_btn.setFixedSize(34, 34)
-        self.del_btn.setStyleSheet("""
-            QPushButton { background-color: #252525; border: 1px solid #333; border-radius: 5px; }
-            QPushButton:hover { background-color: #333; }
-        """)
+        self.del_btn.setFixedSize(40, 40)
+        self.del_btn.setObjectName("SecondaryAction")
         self.del_btn.clicked.connect(lambda: self.deleted.emit(self))
         layout.addWidget(self.del_btn)
 
@@ -161,16 +298,7 @@ class ScriptIdList(QWidget):
 
         self.add_btn = QPushButton("Add Script ID")
         self.add_btn.setIcon(qta.icon("fa5s.plus", color="white"))
-        self.add_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2ecc71;
-                color: white;
-                border-radius: 5px;
-                padding: 8px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #27ae60; }
-        """)
+        self.add_btn.setObjectName("SecondaryAction")
         self.add_btn.clicked.connect(lambda: self.add_item())
         self.main_layout.addWidget(self.add_btn)
 
@@ -215,7 +343,8 @@ class ModernUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"MasterHttpRelayVPN v{__version__}")
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(1000, 700)
+        self.setStyleSheet(STYLE_SHEET)
 
         self.config_path = "config.json"
         self.config = self._load_config()
@@ -259,36 +388,41 @@ class ModernUI(QMainWindow):
 
         # Sidebar
         self.sidebar = QWidget()
-        self.sidebar.setFixedWidth(200)
-        self.sidebar.setStyleSheet("background-color: #1a1a1a; color: white; border-right: 1px solid #333;")
+        self.sidebar.setObjectName("Sidebar")
+        self.sidebar.setFixedWidth(240)
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(10, 20, 10, 20)
+        sidebar_layout.setContentsMargins(0, 32, 0, 16)
+        sidebar_layout.setSpacing(8)
+
+        logo_container = QWidget()
+        logo_layout = QHBoxLayout(logo_container)
+        logo_layout.setContentsMargins(24, 0, 24, 24)
+
+        logo_icon = QLabel()
+        logo_icon.setPixmap(qta.icon("fa5s.shield-alt", color="#2D63ED").pixmap(28, 28))
+        logo_layout.addWidget(logo_icon)
 
         logo_label = QLabel("MasterRelay")
-        logo_label.setFont(QFont("Arial", 18, QFont.Weight.Bold))
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo_label.setStyleSheet("margin-bottom: 20px;")
-        sidebar_layout.addWidget(logo_label)
+        logo_label.setFont(QFont("Inter", 18, QFont.Weight.Bold))
+        logo_label.setStyleSheet("color: white; letter-spacing: -0.5px;")
+        logo_layout.addWidget(logo_label)
+        logo_layout.addStretch()
+        sidebar_layout.addWidget(logo_container)
 
         self.nav_list = QListWidget()
-        self.nav_list.setStyleSheet("""
-            QListWidget { border: none; background-color: transparent; outline: none; }
-            QListWidget::item { padding: 12px; border-radius: 5px; margin-bottom: 5px; color: #b0b0b0; }
-            QListWidget::item:selected { background-color: #333333; color: #3498db; font-weight: bold; }
-            QListWidget::item:hover { background-color: #252525; }
-        """)
+        self.nav_list.setObjectName("NavList")
 
         items = [
-            ("Dashboard", "fa5s.tachometer-alt"),
-            ("Monitoring", "fa5s.chart-bar"),
-            ("Routing Rules", "fa5s.route"),
-            ("Settings", "fa5s.cog"),
+            ("Dashboard", "fa5s.th-large"),
+            ("Monitoring", "fa5s.chart-line"),
+            ("Routing Rules", "fa5s.directions"),
+            ("Settings", "fa5s.sliders-h"),
             ("Logs", "fa5s.terminal"),
-            ("IP Scanner", "fa5s.search"),
+            ("IP Scanner", "fa5s.microscope"),
         ]
 
         for text, icon in items:
-            item = QListWidgetItem(qta.icon(icon, color="white"), text)
+            item = QListWidgetItem(qta.icon(icon, color="#888"), text)
             self.nav_list.addItem(item)
 
         self.nav_list.setCurrentRow(0)
@@ -306,7 +440,7 @@ class ModernUI(QMainWindow):
 
         # Content Area
         self.content_stack = QStackedWidget()
-        self.content_stack.setStyleSheet("background-color: #121212; color: #e0e0e0;")
+        self.content_stack.setStyleSheet("background-color: #0A0A0A; color: #e0e0e0;")
 
         self.dashboard_page = self._create_dashboard_page()
         self.monitoring_page = self._create_monitoring_page()
@@ -327,75 +461,118 @@ class ModernUI(QMainWindow):
     def _create_dashboard_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(32)
 
+        header_layout = QHBoxLayout()
         header = QLabel("Dashboard")
-        header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
-        header.setStyleSheet("color: white;")
-        layout.addWidget(header)
-
-        # Top Section: Status and Relay Health
-        top_layout = QHBoxLayout()
-
-        # Status Card
-        status_card = QFrame()
-        status_card.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
-        status_layout = QHBoxLayout(status_card)
-        status_layout.setContentsMargins(20, 20, 20, 20)
-
-        self.status_icon = QLabel()
-        self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#7f8c8d").pixmap(48, 48))
-        status_layout.addWidget(self.status_icon)
-
-        status_text_layout = QVBoxLayout()
-        self.status_label = QLabel("Status: Disconnected")
-        self.status_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        status_text_layout.addWidget(self.status_label)
-
-        self.status_detail = QLabel("Ready to start")
-        self.status_detail.setStyleSheet("color: #b0b0b0;")
-        status_text_layout.addWidget(self.status_detail)
-        status_layout.addLayout(status_text_layout)
-
-        status_layout.addStretch()
+        header.setFont(QFont("Inter", 28, QFont.Weight.Bold))
+        header.setStyleSheet("color: #FFF; letter-spacing: -1px;")
+        header_layout.addWidget(header)
+        header_layout.addStretch()
 
         self.toggle_btn = QPushButton("Start Proxy")
-        self.toggle_btn.setFixedSize(150, 40)
-        self.toggle_btn.setStyleSheet("""
-            QPushButton { background-color: #2ecc71; color: white; border-radius: 5px; font-weight: bold; }
-            QPushButton:hover { background-color: #27ae60; }
-        """)
+        self.toggle_btn.setObjectName("PrimaryAction")
+        self.toggle_btn.setMinimumWidth(160)
+        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.toggle_btn.clicked.connect(self._toggle_proxy)
-        status_layout.addWidget(self.toggle_btn)
-        top_layout.addWidget(status_card, 2)
+        header_layout.addWidget(self.toggle_btn)
+        layout.addLayout(header_layout)
+
+        # Status and Health Section
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(24)
+
+        # Status Card
+        self.status_card = QFrame()
+        self.status_card.setProperty("class", "Card")
+        status_layout = QVBoxLayout(self.status_card)
+        status_layout.setContentsMargins(24, 24, 24, 24)
+
+        status_header = QHBoxLayout()
+        self.status_icon = QLabel()
+        self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#444").pixmap(14, 14))
+        status_header.addWidget(self.status_icon)
+
+        self.status_label = QLabel("DISCONNECTED")
+        self.status_label.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        self.status_label.setStyleSheet("color: #999; letter-spacing: 1px;")
+        status_header.addWidget(self.status_label)
+        status_header.addStretch()
+        status_layout.addLayout(status_header)
+
+        self.status_detail = QLabel("Ready to secure your connection")
+        self.status_detail.setFont(QFont("Inter", 16, QFont.Weight.Medium))
+        self.status_detail.setStyleSheet("color: #EEE; margin-top: 8px;")
+        status_layout.addWidget(self.status_detail)
+
+        cards_row.addWidget(self.status_card, 2)
 
         # Relay Health Card
         self.health_card = QFrame()
-        self.health_card.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
+        self.health_card.setProperty("class", "Card")
         health_layout = QVBoxLayout(self.health_card)
-        health_title = QLabel("Relay Health")
-        health_title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        health_layout.setContentsMargins(24, 24, 24, 24)
+
+        health_title = QLabel("RELAY HEALTH")
+        health_title.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        health_title.setStyleSheet("color: #999; letter-spacing: 1px;")
         health_layout.addWidget(health_title)
 
         self.health_list = QLabel("No active scripts")
-        self.health_list.setStyleSheet("color: #b0b0b0; font-size: 11px;")
+        self.health_list.setStyleSheet("color: #BBB; font-size: 13px; margin-top: 8px;")
         self.health_list.setWordWrap(True)
         health_layout.addWidget(self.health_list)
         health_layout.addStretch()
-        top_layout.addWidget(self.health_card, 1)
+        cards_row.addWidget(self.health_card, 1)
 
-        layout.addLayout(top_layout)
+        layout.addLayout(cards_row)
+
+        # Stats Area
+        stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(24)
+
+        def create_stat_box(title, value, icon, color):
+            box = QFrame()
+            box.setProperty("class", "Card")
+            blayout = QVBoxLayout(box)
+            blayout.setContentsMargins(24, 24, 24, 24)
+
+            top_box = QHBoxLayout()
+            tlabel = QLabel(title.upper())
+            tlabel.setStyleSheet("color: #999; font-size: 11px; font-weight: 700; letter-spacing: 1px;")
+            top_box.addWidget(tlabel)
+            top_box.addStretch()
+            ilabel = QLabel()
+            ilabel.setPixmap(qta.icon(icon, color=color).pixmap(20, 20))
+            top_box.addWidget(ilabel)
+            blayout.addLayout(top_box)
+
+            vlabel = QLabel(value)
+            vlabel.setFont(QFont("Inter", 24, QFont.Weight.Bold))
+            vlabel.setStyleSheet("color: #FFF; margin-top: 4px;")
+            blayout.addWidget(vlabel)
+            return box, vlabel
+
+        self.stat_box_1, self.val_requests = create_stat_box("Requests", "0", "fa5s.exchange-alt", "#2D63ED")
+        self.stat_box_2, self.val_data = create_stat_box("Bandwidth", "0 MB", "fa5s.database", "#00BFA5")
+        self.stat_box_3, self.val_latency = create_stat_box("Latency", "0 ms", "fa5s.bolt", "#FFD600")
+
+        stats_layout.addWidget(self.stat_box_1)
+        stats_layout.addWidget(self.stat_box_2)
+        stats_layout.addWidget(self.stat_box_3)
+        layout.addLayout(stats_layout)
 
         # Quota Card
         quota_card = QFrame()
-        quota_card.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
+        quota_card.setProperty("class", "Card")
         quota_layout = QVBoxLayout(quota_card)
-        quota_layout.setContentsMargins(20, 20, 20, 20)
+        quota_layout.setContentsMargins(24, 24, 24, 24)
 
         quota_header = QHBoxLayout()
-        quota_title = QLabel("Daily Usage Quota")
-        quota_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        quota_title = QLabel("DAILY USAGE QUOTA")
+        quota_title.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        quota_title.setStyleSheet("color: #999; letter-spacing: 1px;")
         quota_header.addWidget(quota_title)
         quota_header.addStretch()
 
@@ -404,6 +581,8 @@ class ModernUI(QMainWindow):
         initial_limit = 20000 * num_scripts if num_scripts > 0 else 20000
 
         self.quota_label = QLabel(f"0 / {initial_limit}")
+        self.quota_label.setFont(QFont("Inter", 12, QFont.Weight.Bold))
+        self.quota_label.setStyleSheet("color: #EEE;")
         quota_header.addWidget(self.quota_label)
         quota_layout.addLayout(quota_header)
 
@@ -411,42 +590,13 @@ class ModernUI(QMainWindow):
         self.quota_progress.setMaximum(initial_limit)
         self.quota_progress.setValue(0)
         self.quota_progress.setTextVisible(False)
-        self.quota_progress.setStyleSheet("""
-            QProgressBar { height: 10px; border-radius: 5px; background-color: #333333; }
-            QProgressBar::chunk { background-color: #3498db; border-radius: 5px; }
-        """)
         quota_layout.addWidget(self.quota_progress)
 
         self.quota_hint = QLabel("Resets daily at 10:30 AM")
-        self.quota_hint.setStyleSheet("color: #7f8c8d; font-size: 11px;")
+        self.quota_hint.setStyleSheet("color: #555; font-size: 12px; margin-top: 4px;")
         quota_layout.addWidget(self.quota_hint)
 
         layout.addWidget(quota_card)
-
-        # Stats Area
-        stats_layout = QHBoxLayout()
-
-        def create_stat_box(title, value):
-            box = QFrame()
-            box.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
-            blayout = QVBoxLayout(box)
-            tlabel = QLabel(title)
-            tlabel.setStyleSheet("color: #b0b0b0; font-size: 12px;")
-            vlabel = QLabel(value)
-            vlabel.setFont(QFont("Arial", 18, QFont.Weight.Bold))
-            vlabel.setStyleSheet("color: white;")
-            blayout.addWidget(tlabel)
-            blayout.addWidget(vlabel)
-            return box, vlabel
-
-        self.stat_box_1, self.val_requests = create_stat_box("Total Requests", "0")
-        self.stat_box_2, self.val_data = create_stat_box("Data Transferred", "0 MB")
-        self.stat_box_3, self.val_latency = create_stat_box("Avg Latency", "0 ms")
-
-        stats_layout.addWidget(self.stat_box_1)
-        stats_layout.addWidget(self.stat_box_2)
-        stats_layout.addWidget(self.stat_box_3)
-        layout.addLayout(stats_layout)
 
         layout.addStretch()
         return page
@@ -454,43 +604,39 @@ class ModernUI(QMainWindow):
     def _create_routing_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(24)
 
         header_layout = QHBoxLayout()
         header = QLabel("Routing Rules")
-        header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
-        header.setStyleSheet("color: white;")
+        header.setFont(QFont("Inter", 28, QFont.Weight.Bold))
+        header.setStyleSheet("color: #FFF; letter-spacing: -1px;")
         header_layout.addWidget(header)
         header_layout.addStretch()
 
         btn_quick = QPushButton("Quick Add")
         btn_quick.setIcon(qta.icon("fa5s.bolt", color="white"))
-        btn_quick.setStyleSheet("background-color: #f39c12; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; margin-right: 10px;")
+        btn_quick.setObjectName("SecondaryAction")
         btn_quick.clicked.connect(self._quick_add_rule)
         header_layout.addWidget(btn_quick)
 
         btn_add = QPushButton("Add Group")
         btn_add.setIcon(qta.icon("fa5s.plus", color="white"))
-        btn_add.setStyleSheet("background-color: #2ecc71; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold;")
+        btn_add.setObjectName("PrimaryAction")
         btn_add.clicked.connect(self._add_routing_ruleset)
         header_layout.addWidget(btn_add)
         layout.addLayout(header_layout)
 
-        desc = QLabel("Define how domains, IPs, or CIDR ranges should be routed. Exact domains (e.g. github.com) also match their subdomains.")
-        desc.setStyleSheet("color: #b0b0b0;")
+        desc = QLabel("Define how domains, IPs, or CIDR ranges should be routed. Exact domains match their subdomains.")
+        desc.setStyleSheet("color: #777; font-size: 14px;")
         layout.addWidget(desc)
 
         self.routing_table = QTableWidget(0, 5)
-        self.routing_table.setHorizontalHeaderLabels(["On", "Rule / Group Name", "Mode", "Rules", "Actions"])
+        self.routing_table.setHorizontalHeaderLabels(["ON", "RULE / GROUP NAME", "MODE", "RULES", "ACTIONS"])
         self.routing_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.routing_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.routing_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.routing_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.routing_table.setStyleSheet("""
-            QTableWidget { background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333; color: #e0e0e0; gridline-color: #333; }
-            QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 10px; border: 1px solid #333; font-weight: bold; }
-        """)
         layout.addWidget(self.routing_table)
 
         self._refresh_routing_table()
@@ -543,8 +689,8 @@ class ModernUI(QMainWindow):
             btn_edit = QPushButton()
             btn_edit.setIcon(qta.icon("fa5s.edit", color="white"))
             btn_edit.setToolTip("Edit Rule")
-            btn_edit.setFixedSize(30, 30)
-            btn_edit.setStyleSheet("background-color: #3498db; border-radius: 5px;")
+            btn_edit.setFixedSize(34, 34)
+            btn_edit.setObjectName("SecondaryAction")
             btn_edit.clicked.connect(lambda checked, idx=i: self._edit_routing_ruleset(idx))
             action_layout.addWidget(btn_edit)
 
@@ -552,16 +698,16 @@ class ModernUI(QMainWindow):
                 btn_update = QPushButton()
                 btn_update.setIcon(qta.icon("fa5s.sync-alt", color="white"))
                 btn_update.setToolTip("Update Now")
-                btn_update.setFixedSize(30, 30)
-                btn_update.setStyleSheet("background-color: #9b59b6; border-radius: 5px;")
+                btn_update.setFixedSize(34, 34)
+                btn_update.setObjectName("SecondaryAction")
                 btn_update.clicked.connect(lambda checked, idx=i: self._update_group_rules(idx))
                 action_layout.addWidget(btn_update)
 
             btn_del = QPushButton()
-            btn_del.setIcon(qta.icon("fa5s.trash-alt", color="white"))
+            btn_del.setIcon(qta.icon("fa5s.trash-alt", color="#E03131"))
             btn_del.setToolTip("Delete Rule")
-            btn_del.setFixedSize(30, 30)
-            btn_del.setStyleSheet("background-color: #e74c3c; border-radius: 5px;")
+            btn_del.setFixedSize(34, 34)
+            btn_del.setObjectName("SecondaryAction")
             btn_del.clicked.connect(lambda checked, idx=i: self._delete_routing_ruleset(idx))
             action_layout.addWidget(btn_del)
 
@@ -744,56 +890,57 @@ class ModernUI(QMainWindow):
     def _create_monitoring_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(24)
 
         header_layout = QHBoxLayout()
-        header = QLabel("Usage Monitoring")
-        header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
-        header.setStyleSheet("color: white;")
+        header = QLabel("Monitoring")
+        header.setFont(QFont("Inter", 28, QFont.Weight.Bold))
+        header.setStyleSheet("color: white; letter-spacing: -1px;")
         header_layout.addWidget(header)
         header_layout.addStretch()
 
-        header_layout.addWidget(QLabel("Time Range:"))
+        range_label = QLabel("TIME RANGE")
+        range_label.setStyleSheet("color: #999; font-weight: 700; font-size: 11px; letter-spacing: 1px;")
+        header_layout.addWidget(range_label)
         self.time_range_combo = QComboBox()
         self.time_range_combo.addItems(["Last 24 Hours", "Last 7 Days", "Last 30 Days"])
-        self.time_range_combo.setStyleSheet("background-color: #1e1e1e; color: white; padding: 5px; border-radius: 5px;")
+        self.time_range_combo.setMinimumWidth(150)
         header_layout.addWidget(self.time_range_combo)
         layout.addLayout(header_layout)
 
         # Top 10 Table
         table_container = QFrame()
-        table_container.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
+        table_container.setProperty("class", "Card")
         table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(24, 24, 24, 24)
 
-        table_header = QLabel("Top 10 Most Active Hosts (Last 24h)")
-        table_header.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        table_header = QLabel("TOP 10 ACTIVE HOSTS")
+        table_header.setStyleSheet("color: #999; font-weight: 700; font-size: 11px; letter-spacing: 1px;")
         table_layout.addWidget(table_header)
 
         self.usage_table = QTableWidget(0, 5)
-        self.usage_table.setHorizontalHeaderLabels(["Host", "Requests", "Upload", "Download", "Total"])
+        self.usage_table.setHorizontalHeaderLabels(["HOST", "REQUESTS", "UPLOAD", "DOWNLOAD", "TOTAL"])
         self.usage_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.usage_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.usage_table.setStyleSheet("""
-            QTableWidget { background-color: transparent; border: none; color: #e0e0e0; gridline-color: #333; }
-            QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 5px; border: 1px solid #333; }
-        """)
         table_layout.addWidget(self.usage_table)
         layout.addWidget(table_container)
 
         # History Chart Placeholder
         chart_container = QFrame()
-        chart_container.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
+        chart_container.setProperty("class", "Card")
         chart_layout = QVBoxLayout(chart_container)
-        chart_title = QLabel("Traffic History (Last 7 Days)")
-        chart_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        chart_layout.setContentsMargins(24, 24, 24, 24)
+
+        chart_title = QLabel("TRAFFIC HISTORY")
+        chart_title.setStyleSheet("color: #999; font-weight: 700; font-size: 11px; letter-spacing: 1px;")
         chart_layout.addWidget(chart_title)
 
         self.usage_chart = UsageChart()
         chart_layout.addWidget(self.usage_chart)
 
         self.history_summary = QLabel()
-        self.history_summary.setStyleSheet("color: #b0b0b0; font-family: monospace;")
+        self.history_summary.setStyleSheet("color: #555; font-family: 'Inter'; font-size: 12px; margin-top: 12px;")
         chart_layout.addWidget(self.history_summary)
 
         layout.addWidget(chart_container)
@@ -803,46 +950,34 @@ class ModernUI(QMainWindow):
     def _create_settings_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(24)
 
         header = QHBoxLayout()
         header_text = QLabel("Settings")
-        header_text.setFont(QFont("Arial", 24, QFont.Weight.Bold))
-        header_text.setStyleSheet("color: white;")
+        header_text.setFont(QFont("Inter", 28, QFont.Weight.Bold))
+        header_text.setStyleSheet("color: #FFF; letter-spacing: -1px;")
         header.addWidget(header_text)
         header.addStretch()
 
         btn_import = QPushButton("Import")
         btn_import.setIcon(qta.icon("fa5s.file-import", color="white"))
+        btn_import.setObjectName("SecondaryAction")
         btn_import.clicked.connect(self._import_config)
         header.addWidget(btn_import)
 
         btn_export = QPushButton("Export")
         btn_export.setIcon(qta.icon("fa5s.file-export", color="white"))
+        btn_export.setObjectName("SecondaryAction")
         btn_export.clicked.connect(self._export_config)
         header.addWidget(btn_export)
 
         layout.addLayout(header)
 
         tabs = QTabWidget()
-        tabs.setStyleSheet("""
-            QTabWidget::pane { border: 1px solid #333; background: #1e1e1e; border-radius: 5px; }
-            QTabBar::tab { background: #252525; color: #b0b0b0; padding: 10px 20px; border-top-left-radius: 5px; border-top-right-radius: 5px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #1e1e1e; color: #3498db; border-bottom: 2px solid #3498db; }
-        """)
 
         # Styles for Inputs
-        input_style = """
-            QLineEdit, QSpinBox, QDoubleSpinBox {
-                background-color: #121212;
-                color: #e0e0e0;
-                border: 1px solid #333;
-                padding: 8px;
-                border-radius: 5px;
-            }
-            QCheckBox { color: #e0e0e0; }
-        """
-        label_style = "color: #b0b0b0;"
+        label_style = "color: #999; font-weight: 600; font-size: 13px;"
 
         def create_form_tab():
             w = QWidget()
@@ -875,17 +1010,14 @@ class ModernUI(QMainWindow):
 
         self.edit_auth_key = QLineEdit(self.config.get("auth_key", ""))
         self.edit_auth_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.edit_auth_key.setStyleSheet(input_style)
         add_row(general_f, "Auth Key:", self.edit_auth_key)
 
         self.edit_google_ip = QLineEdit(self.config.get("google_ip", "216.239.38.120"))
-        self.edit_google_ip.setStyleSheet(input_style)
         add_row(general_f, "Google Frontend IP:", self.edit_google_ip)
 
         self.edit_default_mode = QComboBox()
         self.edit_default_mode.addItems(["Relay", "Direct", "Block"])
         self.edit_default_mode.setCurrentText(self.config.get("default_connection_mode", "relay").capitalize())
-        self.edit_default_mode.setStyleSheet("background-color: #121212; color: #e0e0e0; border: 1px solid #333; padding: 5px; border-radius: 5px;")
         add_row(general_f, "Default Connection Mode:", self.edit_default_mode)
 
         tabs.addTab(general_w, "General")
@@ -893,11 +1025,9 @@ class ModernUI(QMainWindow):
         # Tab 2: Network
         network_w, network_f = create_form_tab()
         self.edit_listen_port = QLineEdit(str(self.config.get("listen_port", 8085)))
-        self.edit_listen_port.setStyleSheet(input_style)
         add_row(network_f, "HTTP Proxy Port:", self.edit_listen_port)
 
         self.edit_socks_port = QLineEdit(str(self.config.get("socks5_port", 1080)))
-        self.edit_socks_port.setStyleSheet(input_style)
         add_row(network_f, "SOCKS5 Port:", self.edit_socks_port)
 
         self.check_lan = QCheckBox("Allow LAN connections")
@@ -911,12 +1041,10 @@ class ModernUI(QMainWindow):
         self.spin_parallel = QSpinBox()
         self.spin_parallel.setRange(1, 10)
         self.spin_parallel.setValue(self.config.get("parallel_relay", 1))
-        self.spin_parallel.setStyleSheet(input_style)
         add_row(relay_f, "Parallel Relay Count:", self.spin_parallel)
 
         self.edit_bypass_hosts = QTextEdit()
         self.edit_bypass_hosts.setPlainText("\n".join(self.config.get("bypass_hosts", [])))
-        self.edit_bypass_hosts.setStyleSheet("background-color: #121212; color: #e0e0e0; border: 1px solid #333; border-radius: 5px;")
         add_row(relay_f, "Bypass Hosts:", self.edit_bypass_hosts)
 
         tabs.addTab(relay_w, "Relay")
@@ -929,8 +1057,8 @@ class ModernUI(QMainWindow):
         layout.addWidget(self.restart_hint)
 
         btn_save = QPushButton("Save Settings")
-        btn_save.setFixedSize(150, 40)
-        btn_save.setStyleSheet("background-color: #3498db; color: white; border-radius: 5px; font-weight: bold; margin-top: 10px;")
+        btn_save.setMinimumWidth(160)
+        btn_save.setObjectName("PrimaryAction")
         btn_save.clicked.connect(self._save_settings_from_ui)
         layout.addWidget(btn_save, alignment=Qt.AlignmentFlag.AlignRight)
 
@@ -939,20 +1067,18 @@ class ModernUI(QMainWindow):
     def _create_logs_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(24)
 
         header = QHBoxLayout()
         header_text = QLabel("System Logs")
-        header_text.setFont(QFont("Arial", 24, QFont.Weight.Bold))
-        header_text.setStyleSheet("color: white;")
+        header_text.setFont(QFont("Inter", 28, QFont.Weight.Bold))
+        header_text.setStyleSheet("color: #FFF; letter-spacing: -1px;")
         header.addWidget(header_text)
         header.addStretch()
 
-        btn_clear = QPushButton("Clear")
-        btn_clear.setStyleSheet("""
-            QPushButton { background-color: #333; color: white; border-radius: 5px; padding: 5px 15px; }
-            QPushButton:hover { background-color: #444; }
-        """)
+        btn_clear = QPushButton("Clear Logs")
+        btn_clear.setObjectName("SecondaryAction")
         btn_clear.clicked.connect(lambda: self.log_view.clear())
         header.addWidget(btn_clear)
         layout.addLayout(header)
@@ -960,7 +1086,7 @@ class ModernUI(QMainWindow):
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setStyleSheet("""
-            QTextEdit { background-color: #1e272e; color: #dcdde1; font-family: 'Consolas', monospace; font-size: 11px; border-radius: 5px; }
+            QTextEdit { background-color: #050505; color: #BBB; font-family: 'Consolas', monospace; font-size: 12px; border: 1px solid #222; }
         """)
         layout.addWidget(self.log_view)
 
@@ -969,35 +1095,51 @@ class ModernUI(QMainWindow):
     def _create_scanner_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(24)
 
-        header = QLabel("Google IP Scanner")
-        header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
-        header.setStyleSheet("color: white;")
-        layout.addWidget(header)
+        header_layout = QHBoxLayout()
+        header = QLabel("IP Scanner")
+        header.setFont(QFont("Inter", 28, QFont.Weight.Bold))
+        header.setStyleSheet("color: #FFF; letter-spacing: -1px;")
+        header_layout.addWidget(header)
+        header_layout.addStretch()
+
+        self.scan_btn = QPushButton("Start Analysis")
+        self.scan_btn.setObjectName("PrimaryAction")
+        self.scan_btn.setMinimumWidth(160)
+        self.scan_btn.clicked.connect(self._run_scan)
+        header_layout.addWidget(self.scan_btn)
+        layout.addLayout(header_layout)
 
         desc = QLabel("Find the fastest reachable Google frontend IP for your connection.")
-        desc.setStyleSheet("color: #b0b0b0;")
+        desc.setStyleSheet("color: #777; font-size: 14px;")
         layout.addWidget(desc)
 
         self.scanner_results = QTextEdit()
         self.scanner_results.setReadOnly(True)
         self.scanner_results.setStyleSheet("""
-            QTextEdit { background-color: #1e272e; color: #dcdde1; font-family: 'Consolas', monospace; border-radius: 5px; border: 1px solid #333; }
+            QTextEdit { background-color: #050505; color: #BBB; font-family: 'Consolas', monospace; border: 1px solid #222; }
         """)
         layout.addWidget(self.scanner_results)
-
-        self.scan_btn = QPushButton("Start Scan")
-        self.scan_btn.setFixedSize(150, 40)
-        self.scan_btn.setStyleSheet("background-color: #9b59b6; color: white; border-radius: 5px; font-weight: bold;")
-        self.scan_btn.clicked.connect(self._run_scan)
-        layout.addWidget(self.scan_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
         return page
 
     # Handlers
     def _on_nav_changed(self, index):
+        # Fade effect
+        eff = QGraphicsOpacityEffect(self.content_stack)
+        self.content_stack.setGraphicsEffect(eff)
+
+        # Store animation as class attribute to prevent garbage collection
+        self._nav_anim = QPropertyAnimation(eff, b"opacity")
+        self._nav_anim.setDuration(250)
+        self._nav_anim.setStartValue(0.2)
+        self._nav_anim.setEndValue(1.0)
+        self._nav_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
         self.content_stack.setCurrentIndex(index)
+        self._nav_anim.start()
 
     def _toggle_proxy(self):
         if self.proxy_service.is_running:
@@ -1009,30 +1151,33 @@ class ModernUI(QMainWindow):
 
     def _on_proxy_status_change(self, status):
         if status == "starting":
-            self.status_label.setText("Status: Starting...")
-            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#f1c40f").pixmap(48, 48))
+            self.status_label.setText("STARTING...")
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#f1c40f").pixmap(14, 14))
             self.toggle_btn.setEnabled(False)
         elif status == "stopped":
-            self.status_label.setText("Status: Disconnected")
-            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#7f8c8d").pixmap(48, 48))
+            self.status_label.setText("DISCONNECTED")
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#444").pixmap(14, 14))
             self.toggle_btn.setText("Start Proxy")
-            self.toggle_btn.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 5px; font-weight: bold;")
+            self.toggle_btn.setObjectName("PrimaryAction")
+            self.toggle_btn.setStyle(self.toggle_btn.style()) # Refresh style
             self.toggle_btn.setEnabled(True)
-            self.status_detail.setText("Ready to start")
+            self.status_detail.setText("Ready to secure your connection")
         elif "error" in status:
-            self.status_label.setText("Status: Error")
-            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#e74c3c").pixmap(48, 48))
+            self.status_label.setText("ERROR")
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#e74c3c").pixmap(14, 14))
             self.status_detail.setText(status)
             self.toggle_btn.setText("Start Proxy")
             self.toggle_btn.setEnabled(True)
         else:
             # Running
-            self.status_label.setText("Status: Connected")
-            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#2ecc71").pixmap(48, 48))
+            self.status_label.setText("CONNECTED")
+            self.status_label.setStyleSheet("color: #00BFA5; letter-spacing: 1px;")
+            self.status_icon.setPixmap(qta.icon("fa5s.circle", color="#00BFA5").pixmap(14, 14))
             self.toggle_btn.setText("Stop Proxy")
-            self.toggle_btn.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 5px; font-weight: bold;")
+            self.toggle_btn.setObjectName("StopAction")
+            self.toggle_btn.setStyle(self.toggle_btn.style()) # Refresh style
             self.toggle_btn.setEnabled(True)
-            self.status_detail.setText(f"Listening on {self.config.get('listen_host')}:{self.config.get('listen_port')}")
+            self.status_detail.setText(f"Listening on port {self.config.get('listen_port')}")
 
     def _update_stats(self):
         try:
@@ -1247,6 +1392,17 @@ def main():
     dark_palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
     dark_palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
     app.setPalette(dark_palette)
+
+    # Try to set application-wide font
+    font = QFont("Inter")
+    if font.exactMatch():
+        app.setFont(font)
+    else:
+        # Fallback to Segoe UI or Roboto if Inter is missing
+        font = QFont("Segoe UI")
+        if not font.exactMatch():
+            font = QFont("Roboto")
+        app.setFont(font)
 
     window = ModernUI()
     window.show()
