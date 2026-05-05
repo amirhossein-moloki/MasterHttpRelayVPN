@@ -263,9 +263,6 @@ class ProxyServer:
         return False
 
     def _is_bypassed(self, host: str) -> bool:
-        h = host.lower().rstrip(".")
-        if h == "ir" or h.endswith(".ir"):
-            return True
         # Check legacy bypass_hosts
         if host_matches_rules(host, self._bypass_hosts):
             return True

@@ -528,8 +528,44 @@ MasterHttpRelayVPN/
 - Keep `listen_host` as `127.0.0.1` so only your computer can use the proxy.
 - Every google scripts deployment has limit of 20,000 requests in 24 hours. The app automatically calculates the total limit based on the number of script IDs provided.
 - The daily quota resets automatically at **10:30 AM** local time.
-- Iranian domains (`.ir`) are automatically bypassed and connected directly to improve speed and save quota.
 - Use the **Routing Rules** tab in the GUI to precisely control which domains or IPs should be Relayed, Direct, or Blocked.
+
+---
+
+## Routing Rules Guide 🛣️
+
+The **Routing Rules** system allows you to define how traffic for specific sites or IPs should be handled. It is a more flexible and powerful replacement for the legacy Bypass Hosts.
+
+### Connection Modes
+Each rule or group of rules can be set to one of three modes:
+1.  **Direct:** Traffic is sent directly to the destination without going through the relay and without MITM. Ideal for local sites or services that block proxies.
+2.  **Relay:** Traffic is routed through your Google Apps Script relay. This is used to bypass censorship and DPI.
+3.  **Block:** Traffic is completely blocked (dropped). Useful for blocking ads, trackers, or unwanted services.
+
+### How to Add Domains and IPs
+In the Graphical User Interface (GUI), navigate to the **Routing Rules** tab:
+
+#### Using Quick Add:
+This is the easiest way to add a single rule:
+- **Domain/IP:** Enter a hostname (e.g., `apple.com`) or an IP address (e.g., `1.1.1.1`).
+- **Mode:** Choose the desired action (Direct, Relay, or Block).
+- Hostnames automatically match all subdomains. For example, adding `google.com` as Direct will also route `mail.google.com` directly.
+
+#### Managing Groups (Add Group):
+Groups allow you to organize rules and manage them collectively:
+- **Group Name:** Give your group a descriptive name (e.g., "Streaming Sites").
+- **Mode:** The connection mode applied to all items in this group.
+- **Rules:** Enter a list of domains or IPs, one per line.
+
+### Examples
+-   **Add a domain:** `example.com` or `myuniversity.edu`
+-   **Add a top-level domain suffix:** By entering `.ir` in the rules list, all websites ending with that suffix will match the rule.
+-   **Add a single IP:** `1.1.1.1`
+-   **Add an IP range (CIDR):** `192.168.1.0/24` or `10.0.0.0/8`
+
+### Rule Priority
+The proxy checks the rule groups from top to bottom. The first group that matches the destination host or IP determines the routing mode. If no match is found, the **Default Connection Mode** set in Settings is used.
+
 ---
 
 ## Special Thanks
