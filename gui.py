@@ -51,7 +51,7 @@ STYLE_SHEET = """
         background: none;
     }
     QListWidget#NavList::item {
-        padding: 12px 16px;
+        padding: 16px 16px;
         border-radius: 8px;
         margin: 4px 8px;
         color: #888;
@@ -427,9 +427,8 @@ class ModernUI(QMainWindow):
 
         self.nav_list.setCurrentRow(0)
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
+        self.nav_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         sidebar_layout.addWidget(self.nav_list)
-
-        sidebar_layout.addStretch()
 
         version_label = QLabel(f"v{__version__}")
         version_label.setStyleSheet("color: #95a5a6;")
@@ -637,6 +636,7 @@ class ModernUI(QMainWindow):
         self.routing_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.routing_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.routing_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.routing_table.verticalHeader().setDefaultSectionSize(50)
         layout.addWidget(self.routing_table)
 
         self._refresh_routing_table()
@@ -683,13 +683,15 @@ class ModernUI(QMainWindow):
             # Actions
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(5, 2, 5, 2)
-            action_layout.setSpacing(5)
+            action_layout.setContentsMargins(0, 0, 0, 0)
+            action_layout.setSpacing(8)
+            action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             btn_edit = QPushButton()
             btn_edit.setIcon(qta.icon("fa5s.edit", color="white"))
             btn_edit.setToolTip("Edit Rule")
             btn_edit.setFixedSize(34, 34)
+            btn_edit.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_edit.setObjectName("SecondaryAction")
             btn_edit.clicked.connect(lambda checked, idx=i: self._edit_routing_ruleset(idx))
             action_layout.addWidget(btn_edit)
@@ -699,6 +701,7 @@ class ModernUI(QMainWindow):
                 btn_update.setIcon(qta.icon("fa5s.sync-alt", color="white"))
                 btn_update.setToolTip("Update Now")
                 btn_update.setFixedSize(34, 34)
+                btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn_update.setObjectName("SecondaryAction")
                 btn_update.clicked.connect(lambda checked, idx=i: self._update_group_rules(idx))
                 action_layout.addWidget(btn_update)
@@ -707,6 +710,7 @@ class ModernUI(QMainWindow):
             btn_del.setIcon(qta.icon("fa5s.trash-alt", color="#E03131"))
             btn_del.setToolTip("Delete Rule")
             btn_del.setFixedSize(34, 34)
+            btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_del.setObjectName("SecondaryAction")
             btn_del.clicked.connect(lambda checked, idx=i: self._delete_routing_ruleset(idx))
             action_layout.addWidget(btn_del)
@@ -972,6 +976,12 @@ class ModernUI(QMainWindow):
         btn_export.clicked.connect(self._export_config)
         header.addWidget(btn_export)
 
+        btn_reformat = QPushButton("Reformat Config")
+        btn_reformat.setIcon(qta.icon("fa5s.magic", color="white"))
+        btn_reformat.setObjectName("SecondaryAction")
+        btn_reformat.clicked.connect(self._reformat_config)
+        header.addWidget(btn_reformat)
+
         layout.addLayout(header)
 
         tabs = QTabWidget()
@@ -1003,7 +1013,7 @@ class ModernUI(QMainWindow):
         script_scroll = QScrollArea()
         script_scroll.setWidgetResizable(True)
         script_scroll.setWidget(self.script_id_list)
-        script_scroll.setFixedHeight(150)
+        script_scroll.setMinimumHeight(150)
         script_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         add_row(general_f, "Apps Script IDs:", script_scroll)
@@ -1043,11 +1053,51 @@ class ModernUI(QMainWindow):
         self.spin_parallel.setValue(self.config.get("parallel_relay", 1))
         add_row(relay_f, "Parallel Relay Count:", self.spin_parallel)
 
+        self.check_youtube_relay = QCheckBox("Route YouTube through Relay")
+        self.check_youtube_relay.setChecked(self.config.get("youtube_via_relay", False))
+        add_row(relay_f, "YouTube Relay:", self.check_youtube_relay)
+
         self.edit_bypass_hosts = QTextEdit()
         self.edit_bypass_hosts.setPlainText("\n".join(self.config.get("bypass_hosts", [])))
         add_row(relay_f, "Bypass Hosts:", self.edit_bypass_hosts)
 
         tabs.addTab(relay_w, "Relay")
+
+        # Tab 4: Exit Node
+        exit_node_w, exit_node_f = create_form_tab()
+        exit_cfg = self.config.get("exit_node", {})
+
+        self.check_exit_enabled = QCheckBox("Enable Exit Node (Chain Relay)")
+        self.check_exit_enabled.setChecked(exit_cfg.get("enabled", False))
+        add_row(exit_node_f, "Status:", self.check_exit_enabled)
+
+        self.combo_exit_provider = QComboBox()
+        provider_map = {"custom": "Custom", "valtown": "ValTown", "cloudflare": "Cloudflare", "deno": "Deno", "vps": "VPS"}
+        self.combo_exit_provider.addItems(list(provider_map.values()))
+        provider_key = exit_cfg.get("provider", "custom").lower()
+        self.combo_exit_provider.setCurrentText(provider_map.get(provider_key, "Custom"))
+        add_row(exit_node_f, "Provider:", self.combo_exit_provider)
+
+        self.edit_exit_url = QLineEdit(exit_cfg.get("url", ""))
+        self.edit_exit_url.setPlaceholderText("https://your-exit-node-url.com")
+        add_row(exit_node_f, "Exit Node URL:", self.edit_exit_url)
+
+        self.edit_exit_psk = QLineEdit(exit_cfg.get("psk", ""))
+        self.edit_exit_psk.setEchoMode(QLineEdit.EchoMode.Password)
+        self.edit_exit_psk.setPlaceholderText("Pre-Shared Key (Optional)")
+        add_row(exit_node_f, "Auth PSK:", self.edit_exit_psk)
+
+        self.combo_exit_mode = QComboBox()
+        self.combo_exit_mode.addItems(["Selective", "Full"])
+        self.combo_exit_mode.setCurrentText(exit_cfg.get("mode", "selective").capitalize())
+        add_row(exit_node_f, "Routing Mode:", self.combo_exit_mode)
+
+        self.edit_exit_hosts = QTextEdit()
+        self.edit_exit_hosts.setPlainText("\n".join(exit_cfg.get("hosts", [])))
+        self.edit_exit_hosts.setPlaceholderText("Domains to route via exit node (one per line)")
+        add_row(exit_node_f, "Selective Hosts:", self.edit_exit_hosts)
+
+        tabs.addTab(exit_node_w, "Exit Node")
 
         layout.addWidget(tabs)
 
@@ -1304,6 +1354,18 @@ class ModernUI(QMainWindow):
             pass
         self.config["lan_sharing"] = self.check_lan.isChecked()
         self.config["parallel_relay"] = self.spin_parallel.value()
+        self.config["youtube_via_relay"] = self.check_youtube_relay.isChecked()
+
+        # Exit Node
+        if "exit_node" not in self.config:
+            self.config["exit_node"] = {}
+        self.config["exit_node"]["enabled"] = self.check_exit_enabled.isChecked()
+        self.config["exit_node"]["provider"] = self.combo_exit_provider.currentText().lower()
+        self.config["exit_node"]["url"] = self.edit_exit_url.text().strip()
+        self.config["exit_node"]["psk"] = self.edit_exit_psk.text().strip()
+        self.config["exit_node"]["mode"] = self.combo_exit_mode.currentText().lower()
+        hosts_text = self.edit_exit_hosts.toPlainText()
+        self.config["exit_node"]["hosts"] = [h.strip() for h in hosts_text.split("\n") if h.strip()]
 
         bypass_text = self.edit_bypass_hosts.toPlainText()
         self.config["bypass_hosts"] = [h.strip() for h in bypass_text.split("\n") if h.strip()]
@@ -1332,6 +1394,18 @@ class ModernUI(QMainWindow):
                     self.edit_socks_port.setText(str(self.config.get("socks5_port", 1080)))
                     self.check_lan.setChecked(self.config.get("lan_sharing", False))
                     self.spin_parallel.setValue(self.config.get("parallel_relay", 1))
+                    self.check_youtube_relay.setChecked(self.config.get("youtube_via_relay", False))
+
+                    exit_cfg = self.config.get("exit_node", {})
+                    self.check_exit_enabled.setChecked(exit_cfg.get("enabled", False))
+                    provider_map = {"custom": "Custom", "valtown": "ValTown", "cloudflare": "Cloudflare", "deno": "Deno", "vps": "VPS"}
+                    provider_key = exit_cfg.get("provider", "custom").lower()
+                    self.combo_exit_provider.setCurrentText(provider_map.get(provider_key, "Custom"))
+                    self.edit_exit_url.setText(exit_cfg.get("url", ""))
+                    self.edit_exit_psk.setText(exit_cfg.get("psk", ""))
+                    self.combo_exit_mode.setCurrentText(exit_cfg.get("mode", "selective").capitalize())
+                    self.edit_exit_hosts.setPlainText("\n".join(exit_cfg.get("hosts", [])))
+
                     self.edit_bypass_hosts.setPlainText("\n".join(self.config.get("bypass_hosts", [])))
             except Exception as e:
                 logging.error(f"Import failed: {e}")
@@ -1344,6 +1418,17 @@ class ModernUI(QMainWindow):
                     json.dump(self.config, f, indent=2)
             except Exception as e:
                 logging.error(f"Export failed: {e}")
+
+    def _reformat_config(self):
+        """Prettify and save the current configuration."""
+        try:
+            self._save_settings_from_ui() # Ensure latest UI changes are captured
+            self._save_config() # This already uses indent=2
+            logging.info("Configuration reformatted and saved successfully.")
+            QMessageBox.information(self, "Success", "Configuration reformatted and saved successfully.")
+        except Exception as e:
+            logging.error(f"Reformat failed: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to reformat config: {e}")
 
     def _run_scan(self):
         self.scan_btn.setEnabled(False)
