@@ -113,6 +113,104 @@ class Worker(QObject):
         self.result.emit(res)
         self.finished.emit()
 
+class ScriptIdItem(QWidget):
+    deleted = pyqtSignal(object)
+
+    def __init__(self, script_id="", parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.edit = QLineEdit(script_id)
+        self.edit.setPlaceholderText("Enter Apps Script ID")
+        self.edit.setStyleSheet("""
+            QLineEdit {
+                background-color: #121212;
+                color: #e0e0e0;
+                border: 1px solid #333;
+                padding: 8px;
+                border-radius: 5px;
+            }
+        """)
+        layout.addWidget(self.edit)
+
+        self.del_btn = QPushButton()
+        self.del_btn.setIcon(qta.icon("fa5s.trash-alt", color="#e74c3c"))
+        self.del_btn.setFixedSize(34, 34)
+        self.del_btn.setStyleSheet("""
+            QPushButton { background-color: #252525; border: 1px solid #333; border-radius: 5px; }
+            QPushButton:hover { background-color: #333; }
+        """)
+        self.del_btn.clicked.connect(lambda: self.deleted.emit(self))
+        layout.addWidget(self.del_btn)
+
+class ScriptIdList(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(10)
+
+        self.items_container = QWidget()
+        self.items_layout = QVBoxLayout(self.items_container)
+        self.items_layout.setContentsMargins(0, 0, 0, 0)
+        self.items_layout.setSpacing(8)
+        self.items_layout.addStretch()
+
+        self.main_layout.addWidget(self.items_container)
+
+        self.add_btn = QPushButton("Add Script ID")
+        self.add_btn.setIcon(qta.icon("fa5s.plus", color="white"))
+        self.add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2ecc71;
+                color: white;
+                border-radius: 5px;
+                padding: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #27ae60; }
+        """)
+        self.add_btn.clicked.connect(lambda: self.add_item())
+        self.main_layout.addWidget(self.add_btn)
+
+        self.items = []
+
+    def add_item(self, script_id=""):
+        item = ScriptIdItem(script_id)
+        item.deleted.connect(self.remove_item)
+        # Insert before the stretch
+        self.items_layout.insertWidget(len(self.items), item)
+        self.items.append(item)
+        return item
+
+    def remove_item(self, item):
+        if len(self.items) <= 1 and not item.edit.text():
+            # Don't remove the last empty one, just clear it
+            return
+
+        self.items.remove(item)
+        item.deleteLater()
+        if not self.items:
+            self.add_item()
+
+    def set_ids(self, ids):
+        # Clear existing
+        for item in self.items:
+            item.deleteLater()
+        self.items = []
+
+        if not ids:
+            self.add_item()
+        else:
+            if isinstance(ids, str):
+                ids = [ids]
+            for sid in ids:
+                self.add_item(sid)
+
+    def get_ids(self):
+        return [item.edit.text().strip() for item in self.items if item.edit.text().strip()]
+
 class ModernUI(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -379,7 +477,7 @@ class ModernUI(QMainWindow):
         header_layout.addWidget(btn_add)
         layout.addLayout(header_layout)
 
-        desc = QLabel("Define how domains, IPs, or CIDR ranges should be routed.")
+        desc = QLabel("Define how domains, IPs, or CIDR ranges should be routed. Exact domains (e.g. github.com) also match their subdomains.")
         desc.setStyleSheet("color: #b0b0b0;")
         layout.addWidget(desc)
 
@@ -762,17 +860,18 @@ class ModernUI(QMainWindow):
         general_w, general_f = create_form_tab()
 
         script_ids = self.config.get("script_ids") or self.config.get("script_id", "")
-        if isinstance(script_ids, list):
-            script_ids_text = "\n".join(script_ids)
-        else:
-            script_ids_text = str(script_ids)
 
-        self.edit_script_id = QTextEdit()
-        self.edit_script_id.setPlaceholderText("Enter one or more Apps Script IDs, one per line.")
-        self.edit_script_id.setPlainText(script_ids_text)
-        self.edit_script_id.setFixedHeight(100)
-        self.edit_script_id.setStyleSheet(input_style)
-        add_row(general_f, "Apps Script IDs:", self.edit_script_id)
+        self.script_id_list = ScriptIdList()
+        self.script_id_list.set_ids(script_ids)
+
+        # Wrap in scroll area if it gets long
+        script_scroll = QScrollArea()
+        script_scroll.setWidgetResizable(True)
+        script_scroll.setWidget(self.script_id_list)
+        script_scroll.setFixedHeight(150)
+        script_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        add_row(general_f, "Apps Script IDs:", script_scroll)
 
         self.edit_auth_key = QLineEdit(self.config.get("auth_key", ""))
         self.edit_auth_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -1038,8 +1137,7 @@ class ModernUI(QMainWindow):
     def _save_settings_from_ui(self):
         self.restart_hint.setVisible(True)
 
-        script_ids_text = self.edit_script_id.toPlainText()
-        script_ids = [s.strip() for s in script_ids_text.split("\n") if s.strip()]
+        script_ids = self.script_id_list.get_ids()
         if len(script_ids) == 1:
             self.config["script_id"] = script_ids[0]
             if "script_ids" in self.config: del self.config["script_ids"]
@@ -1081,10 +1179,7 @@ class ModernUI(QMainWindow):
                     self._save_config()
                     # Reload UI
                     script_ids = self.config.get("script_ids") or self.config.get("script_id", "")
-                    if isinstance(script_ids, list):
-                        self.edit_script_id.setPlainText("\n".join(script_ids))
-                    else:
-                        self.edit_script_id.setPlainText(str(script_ids))
+                    self.script_id_list.set_ids(script_ids)
 
                     self.edit_auth_key.setText(self.config.get("auth_key", ""))
                     self.edit_google_ip.setText(self.config.get("google_ip", ""))
