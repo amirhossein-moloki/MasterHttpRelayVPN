@@ -76,11 +76,23 @@ class UsageTracker:
                 time.sleep(1) # Simple backoff
 
     def _get_today_str(self):
-        now = datetime.now()
-        reset_time = now.replace(hour=10, minute=30, second=0, microsecond=0)
-        if now < reset_time:
-            return (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        return now.strftime("%Y-%m-%d")
+        """Get the date string for the current quota day (starts at 10:30 AM)."""
+        return self._get_quota_day_str(time.time())
+
+    def _get_quota_day_str(self, ts):
+        dt = datetime.fromtimestamp(ts)
+        reset_time = dt.replace(hour=10, minute=30, second=0, microsecond=0)
+        if dt < reset_time:
+            return (dt - timedelta(days=1)).strftime("%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d")
+
+    def get_current_quota_day_start(self):
+        """Get the unix timestamp for the start of the current quota day (10:30 AM)."""
+        dt_now = datetime.now()
+        reset_time = dt_now.replace(hour=10, minute=30, second=0, microsecond=0)
+        if dt_now < reset_time:
+            return (reset_time - timedelta(days=1)).timestamp()
+        return reset_time.timestamp()
 
     def add_request(self, count=1):
         """Record Apps Script executions for quota tracking (Async)."""
@@ -106,6 +118,10 @@ class UsageTracker:
                 log.error(f"Error getting count from DB: {e}")
                 return 0
 
+    def set_limit(self, limit):
+        with self._lock:
+            self.limit = limit
+
     def get_remaining(self):
         return max(0, self.limit - self.get_count())
 
@@ -113,8 +129,12 @@ class UsageTracker:
         return self.get_count() >= self.limit
 
     def get_top_hosts(self, limit=10, days=1):
-        """Get top hosts by total traffic in the last N days."""
-        since = time.time() - (days * 86400)
+        """Get top hosts by total traffic. If days=1, shows data since 10:30 AM today."""
+        if days == 1:
+            since = self.get_current_quota_day_start()
+        else:
+            since = time.time() - (days * 86400)
+
         with self._lock:
             try:
                 conn = sqlite3.connect(self.db_path)
@@ -143,13 +163,16 @@ class UsageTracker:
                 return []
 
     def get_history(self, days=7):
-        """Get daily traffic history for charts."""
+        """Get daily traffic history for charts, grouped by quota days (10:30 to 10:30)."""
+        # We shift the timestamp by 10 hours and 30 minutes (37800 seconds) backwards
+        # so that 10:30 AM becomes 00:00 AM in SQLite's date calculation.
+        shift = 10 * 3600 + 30 * 60
         with self._lock:
             try:
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+                cursor.execute(f"""
+                    SELECT date(timestamp - {shift}, 'unixepoch', 'localtime') as day,
                            SUM(bytes_sent), SUM(bytes_received)
                     FROM traffic_logs
                     WHERE timestamp > ?

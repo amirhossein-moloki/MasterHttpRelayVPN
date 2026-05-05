@@ -526,8 +526,10 @@ MasterHttpRelayVPN/
 - **Change the default `AUTH_KEY`** in `Code.gs` before deploying.
 - **Don't share the `ca/` folder** — it contains your private certificate key.
 - Keep `listen_host` as `127.0.0.1` so only your computer can use the proxy.
-- Every google scripts deployment has limit of 20,000 requests in 24 hours (The app automatically calculates the total limit based on the number of script IDs provided).
+- Every google scripts deployment has limit of 20,000 requests in 24 hours. The app automatically calculates the total limit based on the number of script IDs provided.
+- The daily quota resets automatically at **10:30 AM** local time.
 - Iranian domains (`.ir`) are automatically bypassed and connected directly to improve speed and save quota.
+- Use the **Routing Rules** tab in the GUI to precisely control which domains or IPs should be Relayed, Direct, or Blocked.
 ---
 
 ## Special Thanks

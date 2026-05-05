@@ -38,6 +38,17 @@ class ProxyService(QObject):
     def _set_status(self, status: str):
         self.status_changed.emit(status)
 
+    def update_config(self, config: dict):
+        """Update service configuration and quota limits."""
+        self.config = config
+        script_ids = self.config.get("script_ids") or self.config.get("script_id")
+        num_scripts = len(script_ids) if isinstance(script_ids, list) else (1 if script_ids else 0)
+        total_limit = 20000 * num_scripts if num_scripts > 0 else 20000
+        self.usage_tracker.set_limit(total_limit)
+
+        if self.server:
+            self.server.update_rule_groups(self.config)
+
     def start(self):
         if self.is_running:
             return
@@ -108,7 +119,7 @@ class ProxyService(QObject):
 
     async def update_bypass_group(self, group_index: int) -> bool:
         """Fetch updated rules for a bypass group from its update_url."""
-        groups = self.config.get("bypass_groups", [])
+        groups = self.config.get("rule_groups", []) or self.config.get("bypass_groups", [])
         if group_index < 0 or group_index >= len(groups):
             return False
 
