@@ -176,6 +176,23 @@ class ProxyServer:
             log.error("Run: pip install cryptography")
             raise SystemExit(1)
 
+    def update_rule_groups(self, config: dict):
+        """Hot-reload routing rule groups and relay settings from config."""
+        new_groups = []
+        raw_groups = config.get("rule_groups") or config.get("bypass_groups") or []
+        for g in raw_groups:
+            if g.get("enabled", True):
+                new_groups.append(load_rule_group(g))
+        self._rule_groups = new_groups
+        self._bypass_hosts = load_host_rules(config.get("bypass_hosts", []))
+        self._block_hosts = load_host_rules(config.get("block_hosts", []))
+        self._default_mode = config.get("default_connection_mode", "relay")
+
+        if self.fronter:
+            self.fronter.update_config(config)
+
+        log.info("Routing rules updated (%d groups)", len(self._rule_groups))
+
     # ── Host-policy helpers ───────────────────────────────────────
 
     @staticmethod

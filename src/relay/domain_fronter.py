@@ -812,6 +812,28 @@ class DomainFronter:
     def _exec_path_for_sid(self, sid: str) -> str:
         """Build the /macros/s/<sid>/(dev|exec) path for a specific script ID."""
         return f"/macros/s/{sid}/{'dev' if self._dev_available else 'exec'}"
+
+    def update_config(self, config: dict):
+        """Update script IDs and relay settings from new config."""
+        script = config.get("script_ids") or config.get("script_id")
+        self._script_ids = script if isinstance(script, list) else [script]
+        if not self._script_ids or not self._script_ids[0]:
+            self._script_ids = [""]
+
+        self.script_id = self._script_ids[0]
+
+        try:
+            self._parallel_relay = int(config.get("parallel_relay", 1))
+        except (TypeError, ValueError):
+            self._parallel_relay = 1
+        self._parallel_relay = max(1, min(self._parallel_relay, len(self._script_ids)))
+
+        self.auth_key = config.get("auth_key", self.auth_key)
+        self.connect_host = config.get("google_ip", self.connect_host)
+
+        log.info("Relay config updated: %d script(s), parallel=%d",
+                 len(self._script_ids), self._parallel_relay)
+
     async def _flush_pool(self):
         """Close all pooled connections (they may be stale after errors)."""
         async with self._pool_lock:

@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import asyncio
+from datetime import datetime, timedelta
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -182,7 +183,7 @@ class ModernUI(QMainWindow):
         items = [
             ("Dashboard", "fa5s.tachometer-alt"),
             ("Monitoring", "fa5s.chart-bar"),
-            ("Rule Groups", "fa5s.layer-group"),
+            ("Routing Rules", "fa5s.route"),
             ("Settings", "fa5s.cog"),
             ("Logs", "fa5s.terminal"),
             ("IP Scanner", "fa5s.search"),
@@ -211,14 +212,14 @@ class ModernUI(QMainWindow):
 
         self.dashboard_page = self._create_dashboard_page()
         self.monitoring_page = self._create_monitoring_page()
-        self.bypass_page = self._create_bypass_page()
+        self.routing_page = self._create_routing_page()
         self.settings_page = self._create_settings_page()
         self.logs_page = self._create_logs_page()
         self.scanner_page = self._create_scanner_page()
 
         self.content_stack.addWidget(self.dashboard_page)
         self.content_stack.addWidget(self.monitoring_page)
-        self.content_stack.addWidget(self.bypass_page)
+        self.content_stack.addWidget(self.routing_page)
         self.content_stack.addWidget(self.settings_page)
         self.content_stack.addWidget(self.logs_page)
         self.content_stack.addWidget(self.scanner_page)
@@ -235,6 +236,9 @@ class ModernUI(QMainWindow):
         header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         header.setStyleSheet("color: white;")
         layout.addWidget(header)
+
+        # Top Section: Status and Relay Health
+        top_layout = QHBoxLayout()
 
         # Status Card
         status_card = QFrame()
@@ -266,8 +270,24 @@ class ModernUI(QMainWindow):
         """)
         self.toggle_btn.clicked.connect(self._toggle_proxy)
         status_layout.addWidget(self.toggle_btn)
+        top_layout.addWidget(status_card, 2)
 
-        layout.addWidget(status_card)
+        # Relay Health Card
+        self.health_card = QFrame()
+        self.health_card.setStyleSheet("background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333;")
+        health_layout = QVBoxLayout(self.health_card)
+        health_title = QLabel("Relay Health")
+        health_title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        health_layout.addWidget(health_title)
+
+        self.health_list = QLabel("No active scripts")
+        self.health_list.setStyleSheet("color: #b0b0b0; font-size: 11px;")
+        self.health_list.setWordWrap(True)
+        health_layout.addWidget(self.health_list)
+        health_layout.addStretch()
+        top_layout.addWidget(self.health_card, 1)
+
+        layout.addLayout(top_layout)
 
         # Quota Card
         quota_card = QFrame()
@@ -300,7 +320,7 @@ class ModernUI(QMainWindow):
         quota_layout.addWidget(self.quota_progress)
 
         self.quota_hint = QLabel("Resets daily at 10:30 AM")
-        self.quota_hint.setStyleSheet("color: #7f8c8d; font-size: 10px;")
+        self.quota_hint.setStyleSheet("color: #7f8c8d; font-size: 11px;")
         quota_layout.addWidget(self.quota_hint)
 
         layout.addWidget(quota_card)
@@ -333,48 +353,54 @@ class ModernUI(QMainWindow):
         layout.addStretch()
         return page
 
-    def _create_bypass_page(self):
+    def _create_routing_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
 
         header_layout = QHBoxLayout()
-        header = QLabel("Rule Groups")
+        header = QLabel("Routing Rules")
         header.setFont(QFont("Arial", 24, QFont.Weight.Bold))
         header.setStyleSheet("color: white;")
         header_layout.addWidget(header)
         header_layout.addStretch()
 
+        btn_quick = QPushButton("Quick Add")
+        btn_quick.setIcon(qta.icon("fa5s.bolt", color="white"))
+        btn_quick.setStyleSheet("background-color: #f39c12; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; margin-right: 10px;")
+        btn_quick.clicked.connect(self._quick_add_rule)
+        header_layout.addWidget(btn_quick)
+
         btn_add = QPushButton("Add Group")
         btn_add.setIcon(qta.icon("fa5s.plus", color="white"))
-        btn_add.setStyleSheet("background-color: #2ecc71; color: white; padding: 8px 15px; border-radius: 5px;")
-        btn_add.clicked.connect(self._add_bypass_group)
+        btn_add.setStyleSheet("background-color: #2ecc71; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold;")
+        btn_add.clicked.connect(self._add_routing_ruleset)
         header_layout.addWidget(btn_add)
         layout.addLayout(header_layout)
 
-        desc = QLabel("Connections matching these rules will follow the assigned mode (Direct, Block, or Relay).")
+        desc = QLabel("Define how domains, IPs, or CIDR ranges should be routed.")
         desc.setStyleSheet("color: #b0b0b0;")
         layout.addWidget(desc)
 
-        self.bypass_groups_table = QTableWidget(0, 6)
-        self.bypass_groups_table.setHorizontalHeaderLabels(["Enabled", "Group Name", "Mode", "Rules Count", "Update URL", "Actions"])
-        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.bypass_groups_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        self.bypass_groups_table.setStyleSheet("""
+        self.routing_table = QTableWidget(0, 5)
+        self.routing_table.setHorizontalHeaderLabels(["On", "Rule / Group Name", "Mode", "Rules", "Actions"])
+        self.routing_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.routing_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.routing_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.routing_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.routing_table.setStyleSheet("""
             QTableWidget { background-color: #1e1e1e; border-radius: 10px; border: 1px solid #333; color: #e0e0e0; gridline-color: #333; }
-            QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 10px; border: 1px solid #333; }
+            QHeaderView::section { background-color: #252525; color: #b0b0b0; padding: 10px; border: 1px solid #333; font-weight: bold; }
         """)
-        layout.addWidget(self.bypass_groups_table)
+        layout.addWidget(self.routing_table)
 
-        self._refresh_bypass_table()
+        self._refresh_routing_table()
         return page
 
-    def _refresh_bypass_table(self):
+    def _refresh_routing_table(self):
         groups = self.config.get("rule_groups") or self.config.get("bypass_groups") or []
-        self.bypass_groups_table.setRowCount(len(groups))
+        self.routing_table.setRowCount(len(groups))
 
         for i, group in enumerate(groups):
             # Enabled Checkbox
@@ -386,22 +412,29 @@ class ModernUI(QMainWindow):
             cb.setChecked(group.get("enabled", True))
             cb.stateChanged.connect(lambda state, idx=i: self._toggle_group_enabled(idx, state))
             check_layout.addWidget(cb)
-            self.bypass_groups_table.setCellWidget(i, 0, check_widget)
+            self.routing_table.setCellWidget(i, 0, check_widget)
 
             # Name
-            self.bypass_groups_table.setItem(i, 1, QTableWidgetItem(group.get("name", "Unnamed")))
+            self.routing_table.setItem(i, 1, QTableWidgetItem(group.get("name", "Unnamed")))
 
             # Mode
-            mode = group.get("mode", "direct").capitalize()
-            self.bypass_groups_table.setItem(i, 2, QTableWidgetItem(mode))
+            mode = group.get("mode", "direct").upper()
+            mode_item = QTableWidgetItem(mode)
+            if mode == "RELAY": mode_item.setForeground(QColor("#3498db"))
+            elif mode == "DIRECT": mode_item.setForeground(QColor("#2ecc71"))
+            elif mode == "BLOCK": mode_item.setForeground(QColor("#e74c3c"))
+            self.routing_table.setItem(i, 2, mode_item)
 
-            # Rules Count
-            count = len(group.get("rules", []))
-            self.bypass_groups_table.setItem(i, 3, QTableWidgetItem(str(count)))
-
-            # Update URL
+            # Rules Summary
+            rules = group.get("rules", [])
             url = group.get("update_url", "")
-            self.bypass_groups_table.setItem(i, 4, QTableWidgetItem(url or "None"))
+            if url:
+                summary = f"Subscription: {url[:30]}..."
+            else:
+                summary = f"{len(rules)} items: {', '.join(rules[:3])}"
+                if len(rules) > 3: summary += "..."
+
+            self.routing_table.setItem(i, 3, QTableWidgetItem(summary))
 
             # Actions
             action_widget = QWidget()
@@ -411,16 +444,16 @@ class ModernUI(QMainWindow):
 
             btn_edit = QPushButton()
             btn_edit.setIcon(qta.icon("fa5s.edit", color="white"))
-            btn_edit.setToolTip("Edit Rules")
+            btn_edit.setToolTip("Edit Rule")
             btn_edit.setFixedSize(30, 30)
             btn_edit.setStyleSheet("background-color: #3498db; border-radius: 5px;")
-            btn_edit.clicked.connect(lambda checked, idx=i: self._edit_bypass_group(idx))
+            btn_edit.clicked.connect(lambda checked, idx=i: self._edit_routing_ruleset(idx))
             action_layout.addWidget(btn_edit)
 
             if url:
                 btn_update = QPushButton()
                 btn_update.setIcon(qta.icon("fa5s.sync-alt", color="white"))
-                btn_update.setToolTip("Update from URL")
+                btn_update.setToolTip("Update Now")
                 btn_update.setFixedSize(30, 30)
                 btn_update.setStyleSheet("background-color: #9b59b6; border-radius: 5px;")
                 btn_update.clicked.connect(lambda checked, idx=i: self._update_group_rules(idx))
@@ -428,29 +461,105 @@ class ModernUI(QMainWindow):
 
             btn_del = QPushButton()
             btn_del.setIcon(qta.icon("fa5s.trash-alt", color="white"))
-            btn_del.setToolTip("Delete Group")
+            btn_del.setToolTip("Delete Rule")
             btn_del.setFixedSize(30, 30)
             btn_del.setStyleSheet("background-color: #e74c3c; border-radius: 5px;")
-            btn_del.clicked.connect(lambda checked, idx=i: self._delete_bypass_group(idx))
+            btn_del.clicked.connect(lambda checked, idx=i: self._delete_routing_ruleset(idx))
             action_layout.addWidget(btn_del)
 
-            self.bypass_groups_table.setCellWidget(i, 5, action_widget)
+            self.routing_table.setCellWidget(i, 4, action_widget)
 
-    def _add_bypass_group(self):
-        name, ok = QInputDialog.getText(self, "Add Group", "Group Name:")
-        if ok and name:
+    def _quick_add_rule(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Quick Add Routing Rule")
+        dialog.setMinimumWidth(400)
+        d_layout = QVBoxLayout(dialog)
+
+        form = QFormLayout()
+        edit_host = QLineEdit()
+        edit_host.setPlaceholderText("e.g., example.com or 1.1.1.1")
+        form.addRow("Domain/IP:", edit_host)
+
+        edit_mode = QComboBox()
+        edit_mode.addItems(["Relay", "Direct", "Block"])
+        form.addRow("Mode:", edit_mode)
+        d_layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        d_layout.addWidget(buttons)
+
+        if dialog.exec():
+            host = edit_host.text().strip()
+            if not host: return
+            mode = edit_mode.currentText().lower()
+
             if "rule_groups" not in self.config:
                 self.config["rule_groups"] = self.config.get("bypass_groups", [])
                 if "bypass_groups" in self.config: del self.config["bypass_groups"]
+
+            # Find or create "General Rules" group for this mode
+            group_name = f"General {mode.capitalize()} Rules"
+            target_group = None
+            for g in self.config.get("rule_groups", []):
+                if g["name"] == group_name and g["mode"] == mode and not g.get("update_url"):
+                    target_group = g
+                    break
+
+            if not target_group:
+                target_group = {
+                    "name": group_name,
+                    "enabled": True,
+                    "mode": mode,
+                    "rules": [],
+                    "update_url": ""
+                }
+                if "rule_groups" not in self.config: self.config["rule_groups"] = []
+                self.config["rule_groups"].append(target_group)
+
+            if host not in target_group["rules"]:
+                target_group["rules"].append(host)
+                self._save_config()
+                self._refresh_routing_table()
+                logging.info(f"Added {host} to {group_name}")
+
+    def _add_routing_ruleset(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Routing Rule")
+        dialog.setMinimumWidth(400)
+        d_layout = QVBoxLayout(dialog)
+
+        form = QFormLayout()
+        edit_name = QLineEdit()
+        edit_name.setPlaceholderText("e.g., My Direct Sites")
+        form.addRow("Group Name:", edit_name)
+
+        edit_mode = QComboBox()
+        edit_mode.addItems(["Relay", "Direct", "Block"])
+        form.addRow("Mode:", edit_mode)
+        d_layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        d_layout.addWidget(buttons)
+
+        if dialog.exec():
+            name = edit_name.text() or "New Rule Group"
+            if "rule_groups" not in self.config:
+                self.config["rule_groups"] = self.config.get("bypass_groups", [])
+                if "bypass_groups" in self.config: del self.config["bypass_groups"]
+
             self.config["rule_groups"].append({
                 "name": name,
                 "enabled": True,
-                "mode": "direct",
+                "mode": edit_mode.currentText().lower(),
                 "rules": [],
                 "update_url": ""
             })
             self._save_config()
-            self._refresh_bypass_table()
+            self._refresh_routing_table()
 
     def _toggle_group_enabled(self, index, state):
         groups = self.config.get("rule_groups") or self.config.get("bypass_groups") or []
@@ -458,7 +567,7 @@ class ModernUI(QMainWindow):
             groups[index]["enabled"] = (state == Qt.CheckState.Checked.value)
             self._save_config()
 
-    def _edit_bypass_group(self, index):
+    def _edit_routing_ruleset(self, index):
         groups = self.config.get("rule_groups") or self.config.get("bypass_groups") or []
         if 0 <= index < len(groups):
             group = groups[index]
@@ -501,9 +610,9 @@ class ModernUI(QMainWindow):
                     self.config["rule_groups"] = groups
                     del self.config["bypass_groups"]
                 self._save_config()
-                self._refresh_bypass_table()
+                self._refresh_routing_table()
 
-    def _delete_bypass_group(self, index):
+    def _delete_routing_ruleset(self, index):
         ret = QMessageBox.question(self, "Delete Group", "Are you sure you want to delete this group?",
                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if ret == QMessageBox.StandardButton.Yes:
@@ -514,7 +623,7 @@ class ModernUI(QMainWindow):
                     self.config["rule_groups"] = groups
                     del self.config["bypass_groups"]
                 self._save_config()
-                self._refresh_bypass_table()
+                self._refresh_routing_table()
 
     def _update_group_rules(self, index):
         if not self.proxy_service.is_running:
@@ -527,7 +636,7 @@ class ModernUI(QMainWindow):
             if success:
                 self._save_config()
                 # Refresh UI safely from the main thread
-                QTimer.singleShot(0, self._refresh_bypass_table)
+                QTimer.singleShot(0, self._refresh_routing_table)
                 logging.info(f"Group {index} updated successfully.")
             else:
                 logging.error(f"Failed to update group {index}.")
@@ -651,9 +760,19 @@ class ModernUI(QMainWindow):
 
         # Tab 1: General
         general_w, general_f = create_form_tab()
-        self.edit_script_id = QLineEdit(self.config.get("script_id", ""))
+
+        script_ids = self.config.get("script_ids") or self.config.get("script_id", "")
+        if isinstance(script_ids, list):
+            script_ids_text = "\n".join(script_ids)
+        else:
+            script_ids_text = str(script_ids)
+
+        self.edit_script_id = QTextEdit()
+        self.edit_script_id.setPlaceholderText("Enter one or more Apps Script IDs, one per line.")
+        self.edit_script_id.setPlainText(script_ids_text)
+        self.edit_script_id.setFixedHeight(100)
         self.edit_script_id.setStyleSheet(input_style)
-        add_row(general_f, "Apps Script ID:", self.edit_script_id)
+        add_row(general_f, "Apps Script IDs:", self.edit_script_id)
 
         self.edit_auth_key = QLineEdit(self.config.get("auth_key", ""))
         self.edit_auth_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -823,6 +942,19 @@ class ModernUI(QMainWindow):
             logging.debug(f"Stats update error: {e}")
 
     def _update_stats_impl(self):
+        # Update Quota Hint with next reset time
+        now = datetime.now()
+        reset_today = now.replace(hour=10, minute=30, second=0, microsecond=0)
+        if now >= reset_today:
+            next_reset = reset_today + timedelta(days=1)
+        else:
+            next_reset = reset_today
+
+        diff = next_reset - now
+        hours, remainder = divmod(int(diff.total_seconds()), 3600)
+        minutes, _ = divmod(remainder, 60)
+        self.quota_hint.setText(f"Next reset in {hours}h {minutes}m (at 10:30 AM)")
+
         days_map = {"Last 24 Hours": 1, "Last 7 Days": 7, "Last 30 Days": 30}
         selected_range = self.time_range_combo.currentText()
         days = days_map.get(selected_range, 1)
@@ -838,6 +970,27 @@ class ModernUI(QMainWindow):
                 self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #f1c40f; }")
             else:
                 self.quota_progress.setStyleSheet("QProgressBar { background-color: #333; } QProgressBar::chunk { background-color: #3498db; }")
+
+            # Update Relay Health
+            stats = self.proxy_service.get_stats()
+            if stats:
+                blacklisted = stats.get("blacklisted_scripts", [])
+                script_ids = self.config.get("script_ids") or self.config.get("script_id")
+                if not isinstance(script_ids, list): script_ids = [script_ids] if script_ids else []
+
+                health_text = []
+                for sid in script_ids:
+                    short_id = sid[-8:] if len(sid) > 8 else sid
+                    is_blacklisted = any(b['sid'] == sid[-12:] or b['sid'] == sid for b in blacklisted)
+                    if is_blacklisted:
+                        health_text.append(f"<span style='color: #e74c3c;'>✖ {short_id} (Failing)</span>")
+                    else:
+                        health_text.append(f"<span style='color: #2ecc71;'>✔ {short_id} (Healthy)</span>")
+
+                if health_text:
+                    self.health_list.setText("<br>".join(health_text))
+                else:
+                    self.health_list.setText("No scripts configured")
 
             # Update Monitoring Table
             top_hosts = usage.get("top_hosts", [])
@@ -884,7 +1037,20 @@ class ModernUI(QMainWindow):
 
     def _save_settings_from_ui(self):
         self.restart_hint.setVisible(True)
-        self.config["script_id"] = self.edit_script_id.text()
+
+        script_ids_text = self.edit_script_id.toPlainText()
+        script_ids = [s.strip() for s in script_ids_text.split("\n") if s.strip()]
+        if len(script_ids) == 1:
+            self.config["script_id"] = script_ids[0]
+            if "script_ids" in self.config: del self.config["script_ids"]
+        elif len(script_ids) > 1:
+            self.config["script_ids"] = script_ids
+            if "script_id" in self.config: del self.config["script_id"]
+        else:
+            # Fallback if empty
+            self.config["script_id"] = ""
+            if "script_ids" in self.config: del self.config["script_ids"]
+
         self.config["auth_key"] = self.edit_auth_key.text()
         self.config["google_ip"] = self.edit_google_ip.text()
         self.config["default_connection_mode"] = self.edit_default_mode.currentText().lower()
@@ -902,6 +1068,9 @@ class ModernUI(QMainWindow):
         self.config["mode"] = "apps_script"
         self._save_config()
 
+        # Update service with new config
+        self.proxy_service.update_config(self.config)
+
     def _import_config(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Config", "", "JSON Files (*.json)")
         if file_path:
@@ -911,7 +1080,12 @@ class ModernUI(QMainWindow):
                     self.config.update(new_config)
                     self._save_config()
                     # Reload UI
-                    self.edit_script_id.setText(self.config.get("script_id", ""))
+                    script_ids = self.config.get("script_ids") or self.config.get("script_id", "")
+                    if isinstance(script_ids, list):
+                        self.edit_script_id.setPlainText("\n".join(script_ids))
+                    else:
+                        self.edit_script_id.setPlainText(str(script_ids))
+
                     self.edit_auth_key.setText(self.config.get("auth_key", ""))
                     self.edit_google_ip.setText(self.config.get("google_ip", ""))
                     self.edit_listen_port.setText(str(self.config.get("listen_port", 8085)))
