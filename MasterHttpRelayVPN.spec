@@ -6,9 +6,9 @@ block_cipher = None
 
 a = Analysis(
     ['gui.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=[],
-    datas=[('assets', 'assets'), ('src', 'src')],
+    datas=[('assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
