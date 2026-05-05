@@ -238,6 +238,15 @@ python3 gui.py
 ```
 The GUI provides a dashboard, easy settings management, system logs, and a built-in Google IP scanner.
 
+### Portable Executable (Build for Release)
+
+If you want to create a single-file portable executable for yourself or for distribution:
+
+```bash
+python3 scripts/build_exe.py
+```
+This will use PyInstaller to bundle the application and all its assets (including the icon) into a single file located in the `dist/` folder.
+
 ### Step 5: Set Up Your Browser
 
 Set your browser to use the proxy:

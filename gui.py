@@ -21,6 +21,15 @@ import qtawesome as qta
 # Ensure src is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
 from core.proxy_service import ProxyService
 from core.constants import __version__
 from core.google_ip_scanner import scan_sync
@@ -345,6 +354,11 @@ class ModernUI(QMainWindow):
         self.setWindowTitle(f"MasterHttpRelayVPN v{__version__}")
         self.setMinimumSize(1000, 700)
         self.setStyleSheet(STYLE_SHEET)
+
+        # Set Window Icon
+        icon_path = resource_path("assets/icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         self.config_path = "config.json"
         self.config = self._load_config()
