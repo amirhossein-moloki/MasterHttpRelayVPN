@@ -211,15 +211,25 @@ class ProxyServer:
         self._block_hosts = load_host_rules(config.get("block_hosts", []))
 
         # Hot-reload adblock config
-        self._adblock_urls = [
-            str(u).strip() for u in config.get("adblock_lists", []) if u
-        ]
-        if not config.get("adblock_enabled", True):
+        old_urls = getattr(self, "_adblock_urls", [])
+        new_urls = [str(u).strip() for u in config.get("adblock_lists", []) if u]
+        new_enabled = config.get("adblock_enabled", True)
+
+        url_changed = set(new_urls) != set(old_urls)
+
+        self._adblock_urls = new_urls
+
+        if not new_enabled:
             self._adblock_hosts = (set(), ())
-        elif not self._adblock_hosts[0] and not self._adblock_hosts[1] and self._adblock_urls:
-            # If currently empty but now enabled, try loading from cache
-            _ab_domains = load_all(self._adblock_urls)
-            self._adblock_hosts = load_host_rules(_ab_domains)
+        else:
+            # If URLs changed or we currently have no rules, load from cache
+            if url_changed or (not self._adblock_hosts[0] and not self._adblock_hosts[1]):
+                _ab_domains = load_all(self._adblock_urls)
+                self._adblock_hosts = load_host_rules(_ab_domains)
+
+                # Only trigger background refresh if URLs changed or we were empty
+                if self._adblock_urls:
+                    asyncio.create_task(self._refresh_adblock_lists())
 
         self._default_mode = config.get("default_connection_mode", "relay")
 
