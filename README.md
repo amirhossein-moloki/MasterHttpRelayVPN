@@ -369,6 +369,8 @@ This project is centered on the **Apps Script** relay (free, no VPS needed). For
 | `direct_google_exclude` | see [config.example.json](config.example.json) | Google apps that must use the MITM relay path instead of the fast direct tunnel. |
 | `hosts` | `{}` | Manual DNS override: map a hostname to a specific IP. |
 | `youtube_via_relay` | `false` | Route YouTube (`youtube.com`, `youtu.be`, `youtube-nocookie.com`) through the Apps Script relay instead of the SNI-rewrite path. The SNI-rewrite path uses Google's frontend IP which enforces SafeSearch and can cause **"Video Unavailable"** errors. Setting this to `true` fixes playback at the cost of using more Apps Script executions and slightly higher latency. |
+| `adblock_enabled` | `true` | Enable built-in adblocking using external host lists. |
+| `adblock_lists` | see [config.example.json](config.example.json) | List of URLs to hosts-format blocklists. |
 | `exit_node.provider` | `valtown` | Selected exit-node backend: `valtown`, `cloudflare`, `deno`, or `custom`. |
 | `exit_node.url` | `""` | Beginner-friendly single URL for the selected provider. |
 
@@ -538,6 +540,7 @@ MasterHttpRelayVPN/
 - Every google scripts deployment has limit of 20,000 requests in 24 hours. The app automatically calculates the total limit based on the number of script IDs provided.
 - The daily quota resets automatically at **10:30 AM** local time.
 - Use the **Routing Rules** tab in the GUI to precisely control which domains or IPs should be Relayed, Direct, or Blocked.
+- **Adblock:** Enable the Adblock feature in Settings to automatically block ads and trackers using community-maintained lists.
 
 ---
 

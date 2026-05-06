@@ -13,6 +13,7 @@ import socket
 import ssl
 import time
 import ipaddress
+from core.adblock import load_all, refresh_all
 
 try:
     import certifi
@@ -147,6 +148,28 @@ class ProxyServer:
         self._block_hosts  = load_host_rules(config.get("block_hosts", []))
         self._bypass_hosts = load_host_rules(config.get("bypass_hosts", []))
 
+        # ── Adblock host lists ─────────────────────────────────────
+        # adblock_lists: list of URLs to hosts-format blocklists.
+        # Lists are loaded from disk cache at startup (fast), then
+        # re-downloaded in background when the cache is stale.
+        self._adblock_urls: list[str] = [
+            str(u).strip() for u in config.get("adblock_lists", []) if u
+        ]
+
+        if config.get("adblock_enabled", True) and self._adblock_urls:
+            try:
+                _ab_domains = load_all(self._adblock_urls)
+                self._adblock_hosts = load_host_rules(_ab_domains)
+                log.info(
+                    "Adblock: %d domains active (%d lists)",
+                    len(_ab_domains), len(self._adblock_urls),
+                )
+            except Exception as exc:
+                log.warning("Adblock: failed to load lists at startup: %s", exc)
+                self._adblock_hosts = (set(), ())
+        else:
+            self._adblock_hosts = (set(), ())
+
         # Rule Groups (replacement for Bypass Groups)
         self._rule_groups = []
         # Support legacy "bypass_groups" key
@@ -186,6 +209,18 @@ class ProxyServer:
         self._rule_groups = new_groups
         self._bypass_hosts = load_host_rules(config.get("bypass_hosts", []))
         self._block_hosts = load_host_rules(config.get("block_hosts", []))
+
+        # Hot-reload adblock config
+        self._adblock_urls = [
+            str(u).strip() for u in config.get("adblock_lists", []) if u
+        ]
+        if not config.get("adblock_enabled", True):
+            self._adblock_hosts = (set(), ())
+        elif not self._adblock_hosts[0] and not self._adblock_hosts[1] and self._adblock_urls:
+            # If currently empty but now enabled, try loading from cache
+            _ab_domains = load_all(self._adblock_urls)
+            self._adblock_hosts = load_host_rules(_ab_domains)
+
         self._default_mode = config.get("default_connection_mode", "relay")
 
         if self.fronter:
@@ -248,6 +283,9 @@ class ProxyServer:
         # Check legacy block_hosts first
         if host_matches_rules(host, self._block_hosts):
             return True
+        # Check adblock lists
+        if host_matches_rules(host, self._adblock_hosts):
+            return True
         # Check rule groups
         for group in self._rule_groups:
             if group["mode"] == "block" and host_matches_advanced_rules(host, group):
@@ -303,7 +341,26 @@ class ProxyServer:
                 return False
         return self.fronter._is_static_asset_url(url)
 
+    async def _refresh_adblock_lists(self) -> None:
+        """Background task: re-download stale adblock lists and hot-swap rules."""
+        if not self._adblock_urls:
+            return
+        try:
+            def _update(domains: list[str]) -> None:
+                self._adblock_hosts = load_host_rules(domains)
+                log.info(
+                    "Adblock: rules updated — %d domains active", len(domains)
+                )
+
+            await refresh_all(self._adblock_urls, callback=_update)
+        except Exception as exc:
+            log.warning("Adblock: background refresh failed: %s", exc)
+
     async def start(self, on_ready=None):
+        # Kick off adblock refresh in the background — won't block startup.
+        if self._adblock_urls:
+            asyncio.create_task(self._refresh_adblock_lists())
+
         if self._warmup_before_listen:
             log.info(
                 "Relay warmup in progress... waiting up to %.0fs before opening listeners",
