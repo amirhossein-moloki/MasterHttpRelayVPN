@@ -63,34 +63,30 @@ class SettingsPage(QWidget):
 
         # Tab 1: General
         general_w, general_f = create_form_tab()
-        script_ids = self.main_win.config.get("script_ids") or self.main_win.config.get("script_id", "")
         self.script_id_list = ScriptIdList()
-        self.script_id_list.set_ids(script_ids)
         script_scroll = QScrollArea()
         script_scroll.setWidgetResizable(True)
         script_scroll.setWidget(self.script_id_list)
         script_scroll.setMinimumHeight(150)
         script_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         add_row(general_f, "Apps Script IDs:", script_scroll)
-        self.edit_auth_key = QLineEdit(self.main_win.config.get("auth_key", ""))
+        self.edit_auth_key = QLineEdit()
         self.edit_auth_key.setEchoMode(QLineEdit.EchoMode.Password)
         add_row(general_f, "Auth Key:", self.edit_auth_key)
-        self.edit_google_ip = QLineEdit(self.main_win.config.get("google_ip", "216.239.38.120"))
+        self.edit_google_ip = QLineEdit()
         add_row(general_f, "Google Frontend IP:", self.edit_google_ip)
         self.edit_default_mode = QComboBox()
         self.edit_default_mode.addItems(["Relay", "Direct", "Block"])
-        self.edit_default_mode.setCurrentText(self.main_win.config.get("default_connection_mode", "relay").capitalize())
         add_row(general_f, "Default Connection Mode:", self.edit_default_mode)
         tabs.addTab(general_w, "General")
 
         # Tab 2: Network
         network_w, network_f = create_form_tab()
-        self.edit_listen_port = QLineEdit(str(self.main_win.config.get("listen_port", 8085)))
+        self.edit_listen_port = QLineEdit()
         add_row(network_f, "HTTP Proxy Port:", self.edit_listen_port)
-        self.edit_socks_port = QLineEdit(str(self.main_win.config.get("socks5_port", 1080)))
+        self.edit_socks_port = QLineEdit()
         add_row(network_f, "SOCKS5 Port:", self.edit_socks_port)
         self.check_lan = QCheckBox("Allow LAN connections")
-        self.check_lan.setChecked(self.main_win.config.get("lan_sharing", False))
         add_row(network_f, "", self.check_lan)
         tabs.addTab(network_w, "Network")
 
@@ -98,50 +94,39 @@ class SettingsPage(QWidget):
         relay_w, relay_f = create_form_tab()
         self.spin_parallel = QSpinBox()
         self.spin_parallel.setRange(1, 10)
-        self.spin_parallel.setValue(self.main_win.config.get("parallel_relay", 1))
         add_row(relay_f, "Parallel Relay Count:", self.spin_parallel)
         self.check_youtube_relay = QCheckBox("Route YouTube through Relay")
-        self.check_youtube_relay.setChecked(self.main_win.config.get("youtube_via_relay", False))
         add_row(relay_f, "YouTube Relay:", self.check_youtube_relay)
         self.edit_bypass_hosts = QTextEdit()
-        self.edit_bypass_hosts.setPlainText("\n".join(self.main_win.config.get("bypass_hosts", [])))
         add_row(relay_f, "Bypass Hosts:", self.edit_bypass_hosts)
         tabs.addTab(relay_w, "Relay")
 
         # Tab 4: Exit Node
         exit_node_w, exit_node_f = create_form_tab()
-        exit_cfg = self.main_win.config.get("exit_node", {})
         self.check_exit_enabled = QCheckBox("Enable Exit Node (Chain Relay)")
-        self.check_exit_enabled.setChecked(exit_cfg.get("enabled", False))
         add_row(exit_node_f, "Status:", self.check_exit_enabled)
         self.combo_exit_provider = QComboBox()
-        provider_map = {"custom": "Custom", "valtown": "ValTown", "cloudflare": "Cloudflare", "deno": "Deno", "vps": "VPS"}
-        self.combo_exit_provider.addItems(list(provider_map.values()))
-        provider_key = exit_cfg.get("provider", "custom").lower()
-        self.combo_exit_provider.setCurrentText(provider_map.get(provider_key, "Custom"))
+        self.provider_map = {"custom": "Custom", "valtown": "ValTown", "cloudflare": "Cloudflare", "deno": "Deno", "vps": "VPS"}
+        self.combo_exit_provider.addItems(list(self.provider_map.values()))
         add_row(exit_node_f, "Provider:", self.combo_exit_provider)
-        self.edit_exit_url = QLineEdit(exit_cfg.get("url", ""))
+        self.edit_exit_url = QLineEdit()
         self.edit_exit_url.setPlaceholderText("https://your-exit-node-url.com")
         add_row(exit_node_f, "Exit Node URL:", self.edit_exit_url)
-        self.edit_exit_psk = QLineEdit(exit_cfg.get("psk", ""))
+        self.edit_exit_psk = QLineEdit()
         self.edit_exit_psk.setEchoMode(QLineEdit.EchoMode.Password)
         add_row(exit_node_f, "Auth PSK:", self.edit_exit_psk)
         self.combo_exit_mode = QComboBox()
         self.combo_exit_mode.addItems(["Selective", "Full"])
-        self.combo_exit_mode.setCurrentText(exit_cfg.get("mode", "selective").capitalize())
         add_row(exit_node_f, "Routing Mode:", self.combo_exit_mode)
         self.edit_exit_hosts = QTextEdit()
-        self.edit_exit_hosts.setPlainText("\n".join(exit_cfg.get("hosts", [])))
         add_row(exit_node_f, "Selective Hosts:", self.edit_exit_hosts)
         tabs.addTab(exit_node_w, "Exit Node")
 
         # Tab 5: Adblock
         adblock_w, adblock_f = create_form_tab()
         self.check_adblock_enabled = QCheckBox("Enable Adblock")
-        self.check_adblock_enabled.setChecked(self.main_win.config.get("adblock_enabled", True))
         add_row(adblock_f, "Status:", self.check_adblock_enabled)
         self.edit_adblock_urls = QTextEdit()
-        self.edit_adblock_urls.setPlainText("\n".join(self.main_win.config.get("adblock_lists", [])))
         self.edit_adblock_urls.setPlaceholderText("https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts")
         add_row(adblock_f, "Blocklist URLs:", self.edit_adblock_urls)
         tabs.addTab(adblock_w, "Adblock")
@@ -152,13 +137,64 @@ class SettingsPage(QWidget):
         self.restart_hint.setVisible(False)
         layout.addWidget(self.restart_hint)
 
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        btn_cancel = QPushButton("Cancel Changes")
+        btn_cancel.setMinimumWidth(140)
+        btn_cancel.setObjectName("SecondaryAction")
+        btn_cancel.clicked.connect(self._load_settings_into_ui)
+        btn_layout.addWidget(btn_cancel)
+
         btn_save = QPushButton("Save Settings")
         btn_save.setMinimumWidth(160)
         btn_save.setObjectName("PrimaryAction")
         btn_save.clicked.connect(self._save_settings_from_ui)
-        layout.addWidget(btn_save, alignment=Qt.AlignmentFlag.AlignRight)
+        btn_layout.addWidget(btn_save)
+
+        layout.addLayout(btn_layout)
+
+        # Initialize UI with current config
+        self._load_settings_into_ui()
+
+    def _load_settings_into_ui(self):
+        config = self.main_win.config
+        script_ids = config.get("script_ids") or config.get("script_id", "")
+        self.script_id_list.set_ids(script_ids)
+        self.edit_auth_key.setText(config.get("auth_key", ""))
+        self.edit_google_ip.setText(config.get("google_ip", "216.239.38.120"))
+        self.edit_default_mode.setCurrentText(config.get("default_connection_mode", "relay").capitalize())
+
+        self.edit_listen_port.setText(str(config.get("listen_port", 8085)))
+        self.edit_socks_port.setText(str(config.get("socks5_port", 1080)))
+        self.check_lan.setChecked(config.get("lan_sharing", False))
+
+        self.spin_parallel.setValue(config.get("parallel_relay", 1))
+        self.check_youtube_relay.setChecked(config.get("youtube_via_relay", False))
+        self.edit_bypass_hosts.setPlainText("\n".join(config.get("bypass_hosts", [])))
+
+        exit_cfg = config.get("exit_node", {})
+        self.check_exit_enabled.setChecked(exit_cfg.get("enabled", False))
+        provider_key = exit_cfg.get("provider", "custom").lower()
+        self.combo_exit_provider.setCurrentText(self.provider_map.get(provider_key, "Custom"))
+        self.edit_exit_url.setText(exit_cfg.get("url", ""))
+        self.edit_exit_psk.setText(exit_cfg.get("psk", ""))
+        self.combo_exit_mode.setCurrentText(exit_cfg.get("mode", "selective").capitalize())
+        self.edit_exit_hosts.setPlainText("\n".join(exit_cfg.get("hosts", [])))
+
+        self.check_adblock_enabled.setChecked(config.get("adblock_enabled", True))
+        self.edit_adblock_urls.setPlainText("\n".join(config.get("adblock_lists", [])))
 
     def _save_settings_from_ui(self):
+        reply = QMessageBox.question(
+            self, "Confirm Save",
+            "Are you sure you want to save these settings?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.No:
+            return
+
         self.restart_hint.setVisible(True)
         script_ids = self.script_id_list.get_ids()
         if len(script_ids) == 1:
