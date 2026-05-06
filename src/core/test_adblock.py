@@ -1,7 +1,6 @@
 import unittest
 import os
 import json
-import shutil
 from core.adblock import parse_hosts, load_all, CACHE_FILE
 
 class TestAdblock(unittest.TestCase):
@@ -19,13 +18,22 @@ class TestAdblock(unittest.TestCase):
 just-a-domain.org
 invalid_domain
 127.0.0.1 ok.com # with comment
+ads.com # comment after domain
+  # indented comment
+  leading-space.com
+trailing-space.com
 """
         domains = parse_hosts(content)
         self.assertIn("ads.example.com", domains)
         self.assertIn("more-ads.com", domains)
         self.assertIn("just-a-domain.org", domains)
         self.assertIn("ok.com", domains)
+        self.assertIn("leading-space.com", domains)
+        self.assertIn("trailing-space.com", domains)
         self.assertNotIn("invalid_domain", domains)
+
+        # This one might fail currently if parse_hosts is not robust
+        self.assertIn("ads.com", domains, "Should parse domain when followed by a comment")
 
     def test_load_all_empty(self):
         urls = ["http://example.com/ads.txt"]

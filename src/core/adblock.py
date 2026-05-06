@@ -15,15 +15,24 @@ def parse_hosts(content: str) -> set[str]:
     """Parse hosts-format content and return a set of domains."""
     domains = set()
     for line in content.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+        # Remove comments at the end of the line
+        line = line.split("#")[0].strip()
+        if not line:
             continue
 
         # Match "127.0.0.1 domain.com" or "0.0.0.0 domain.com" or just "domain.com"
         # Some lists just have one domain per line.
         parts = line.split()
+        if not parts:
+            continue
+
         if len(parts) >= 2:
-            domain = parts[1].lower()
+            # Check if the first part looks like an IP address
+            if re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[0]):
+                domain = parts[1].lower()
+            else:
+                # If it's not an IP, take the first part as domain
+                domain = parts[0].lower()
         else:
             domain = parts[0].lower()
 
