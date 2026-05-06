@@ -135,6 +135,17 @@ class SettingsPage(QWidget):
         add_row(exit_node_f, "Selective Hosts:", self.edit_exit_hosts)
         tabs.addTab(exit_node_w, "Exit Node")
 
+        # Tab 5: Adblock
+        adblock_w, adblock_f = create_form_tab()
+        self.check_adblock_enabled = QCheckBox("Enable Adblock")
+        self.check_adblock_enabled.setChecked(self.main_win.config.get("adblock_enabled", True))
+        add_row(adblock_f, "Status:", self.check_adblock_enabled)
+        self.edit_adblock_urls = QTextEdit()
+        self.edit_adblock_urls.setPlainText("\n".join(self.main_win.config.get("adblock_lists", [])))
+        self.edit_adblock_urls.setPlaceholderText("https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts")
+        add_row(adblock_f, "Blocklist URLs:", self.edit_adblock_urls)
+        tabs.addTab(adblock_w, "Adblock")
+
         layout.addWidget(tabs)
         self.restart_hint = QLabel("Note: Changes to ports or LAN sharing require a proxy restart.")
         self.restart_hint.setStyleSheet("color: #e67e22; font-size: 11px; margin-top: 5px;")
@@ -179,6 +190,9 @@ class SettingsPage(QWidget):
         self.main_win.config["exit_node"]["mode"] = self.combo_exit_mode.currentText().lower()
         self.main_win.config["exit_node"]["hosts"] = [h.strip() for h in self.edit_exit_hosts.toPlainText().split("\n") if h.strip()]
 
+        self.main_win.config["adblock_enabled"] = self.check_adblock_enabled.isChecked()
+        self.main_win.config["adblock_lists"] = [u.strip() for u in self.edit_adblock_urls.toPlainText().split("\n") if u.strip()]
+
         self.main_win.config["bypass_hosts"] = [h.strip() for h in self.edit_bypass_hosts.toPlainText().split("\n") if h.strip()]
         self.main_win.config["mode"] = "apps_script"
         self.main_win._save_config()
@@ -207,6 +221,8 @@ class SettingsPage(QWidget):
                     self.edit_exit_url.setText(exit_cfg.get("url", ""))
                     self.edit_exit_psk.setText(exit_cfg.get("psk", ""))
                     self.edit_exit_hosts.setPlainText("\n".join(exit_cfg.get("hosts", [])))
+                    self.check_adblock_enabled.setChecked(self.main_win.config.get("adblock_enabled", True))
+                    self.edit_adblock_urls.setPlainText("\n".join(self.main_win.config.get("adblock_lists", [])))
                     self.edit_bypass_hosts.setPlainText("\n".join(self.main_win.config.get("bypass_hosts", [])))
             except Exception as e: logging.error(f"Import failed: {e}")
 
