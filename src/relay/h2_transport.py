@@ -18,6 +18,7 @@ import asyncio
 import logging
 import socket
 import ssl
+from core.socket_utils import apply_optimized_socket_options, create_optimized_socket
 from urllib.parse import urlparse
 
 try:
@@ -132,11 +133,8 @@ class H2Transport:
         self._sni_idx += 1
         self.sni_host = sni  # kept for backward-compat logging
 
-        # Create raw TCP socket with TCP_NODELAY BEFORE TLS handshake.
-        # Nagle's algorithm can delay small writes (H2 frames) by up to 200ms
-        # waiting to coalesce — TCP_NODELAY forces immediate send.
-        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # Create raw TCP socket with optimizations BEFORE TLS handshake.
+        raw = create_optimized_socket(socket.AF_INET)
         raw.setblocking(False)
 
         try:
