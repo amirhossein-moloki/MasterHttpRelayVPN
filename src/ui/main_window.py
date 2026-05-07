@@ -141,6 +141,7 @@ class ModernUI(QMainWindow):
 
         # Content Area
         self.content_stack = QStackedWidget()
+        self.content_stack.setObjectName("ContentStack")
 
         self.dashboard_page = DashboardPage(self)
         self.monitoring_page = MonitoringPage(self)
@@ -159,14 +160,29 @@ class ModernUI(QMainWindow):
         main_layout.addWidget(self.content_stack)
 
     def _on_nav_changed(self, index):
-        eff = QGraphicsOpacityEffect(self.content_stack)
-        self.content_stack.setGraphicsEffect(eff)
+        # Stop existing animation if running
+        if hasattr(self, "_nav_anim") and self._nav_anim.state() == QPropertyAnimation.State.Running:
+            self._nav_anim.stop()
+
+        target_widget = self.content_stack.widget(index)
+        if not target_widget:
+            return
+
+        # Create effect for the target widget
+        eff = QGraphicsOpacityEffect(target_widget)
+        target_widget.setGraphicsEffect(eff)
+
         self._nav_anim = QPropertyAnimation(eff, b"opacity")
         self._nav_anim.setDuration(250)
-        self._nav_anim.setStartValue(0.2)
+        self._nav_anim.setStartValue(0.0)
         self._nav_anim.setEndValue(1.0)
         self._nav_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        # Change page
         self.content_stack.setCurrentIndex(index)
+
+        # Clean up effect after animation
+        self._nav_anim.finished.connect(lambda: target_widget.setGraphicsEffect(None))
         self._nav_anim.start()
 
     def _on_proxy_status_change(self, status):
