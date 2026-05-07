@@ -30,6 +30,10 @@ STYLE_SHEET = f"""
     #Sidebar {{ background-color: {COLORS['sidebar']}; border-right: 1px solid {COLORS['secondary']}; }}
     QListWidget#NavList {{ border: none; background-color: transparent; outline: none; }}
 
+    /* Content Area */
+    #ContentStack {{ background-color: {COLORS['background']}; }}
+    #ContentStack > QWidget {{ background-color: {COLORS['background']}; }}
+
     /* Scrollbars */
     QScrollBar:vertical {{
         border: none;
