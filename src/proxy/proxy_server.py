@@ -124,12 +124,26 @@ class ProxyServer:
         # Checked before any real DNS lookup; supports exact and suffix matching.
         self._hosts: dict[str, str] = config.get("hosts", {})
         configured_direct_exclude = config.get("direct_google_exclude", [])
+
+        def _parse_host(h: str) -> str:
+            h = h.lower().strip()
+            if "://" in h:
+                # Extract host from URL
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(h)
+                    h = parsed.netloc or parsed.path.split("/")[0]
+                except Exception:
+                    pass
+            return h.rstrip(".")
+
         self._direct_google_exclude = {
-            h.lower().rstrip(".")
+            _parse_host(h)
             for h in (
                 list(self._GOOGLE_DIRECT_EXACT_EXCLUDE) +
                 list(configured_direct_exclude)
             )
+            if h
         }
         configured_direct_allow = config.get("direct_google_allow", [])
         self._direct_google_allow = {
