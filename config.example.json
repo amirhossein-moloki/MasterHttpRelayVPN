@@ -61,6 +61,8 @@
 		".home.arpa"
 	],
 	"direct_google_exclude": [
+		"https://toogoosh.com/",
+		"https://chat.deepseek.com/",
 		"gemini.google.com",
 		"aistudio.google.com",
 		"notebooklm.google.com",
