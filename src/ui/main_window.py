@@ -28,6 +28,7 @@ from .pages.routing import RoutingPage
 from .pages.settings import SettingsPage
 from .pages.logs import LogsPage
 from .pages.scanner import ScannerPage
+from .pages.sni_tester import SNITesterPage
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -121,6 +122,7 @@ class ModernUI(QMainWindow):
             ("Settings", "fa5s.sliders-h"),
             ("Logs", "fa5s.terminal"),
             ("IP Scanner", "fa5s.microscope"),
+            ("SNI Tester", "fa5s.vial"),
         ]
 
         for text, icon in items:
@@ -149,6 +151,7 @@ class ModernUI(QMainWindow):
         self.settings_page = SettingsPage(self)
         self.logs_page = LogsPage(self)
         self.scanner_page = ScannerPage(self)
+        self.sni_tester_page = SNITesterPage(self)
 
         self.content_stack.addWidget(self.dashboard_page)
         self.content_stack.addWidget(self.monitoring_page)
@@ -156,6 +159,7 @@ class ModernUI(QMainWindow):
         self.content_stack.addWidget(self.settings_page)
         self.content_stack.addWidget(self.logs_page)
         self.content_stack.addWidget(self.scanner_page)
+        self.content_stack.addWidget(self.sni_tester_page)
 
         main_layout.addWidget(self.content_stack)
 

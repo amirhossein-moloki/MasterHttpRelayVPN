@@ -131,6 +131,17 @@ class SettingsPage(QWidget):
         add_row(adblock_f, "Blocklist URLs:", self.edit_adblock_urls)
         tabs.addTab(adblock_w, "Adblock")
 
+        # Tab 6: Advanced / Region
+        region_w, region_f = create_form_tab()
+        self.btn_bypass_iran = QPushButton("Add/Update Iran Direct Routing Rule")
+        self.btn_bypass_iran.setObjectName("SecondaryAction")
+        self.btn_bypass_iran.clicked.connect(self._add_iran_bypass)
+        add_row(region_f, "Iran Bypass:", self.btn_bypass_iran)
+        desc_iran = QLabel("Automatically adds a routing group to bypass all Iranian IP ranges (Direct connection).")
+        desc_iran.setStyleSheet("color: #777; font-size: 11px;")
+        region_f.addRow("", desc_iran)
+        tabs.addTab(region_w, "Region")
+
         layout.addWidget(tabs)
         self.restart_hint = QLabel("Note: Changes to ports or LAN sharing require a proxy restart.")
         self.restart_hint.setStyleSheet("color: #e67e22; font-size: 11px; margin-top: 5px;")
@@ -261,6 +272,59 @@ class SettingsPage(QWidget):
                     self.edit_adblock_urls.setPlainText("\n".join(self.main_win.config.get("adblock_lists", [])))
                     self.edit_bypass_hosts.setPlainText("\n".join(self.main_win.config.get("bypass_hosts", [])))
             except Exception as e: logging.error(f"Import failed: {e}")
+
+    def _add_iran_bypass(self):
+        IRAN_IP_URL = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ir.txt"
+
+        if "rule_groups" not in self.main_win.config:
+            self.main_win.config["rule_groups"] = self.main_win.config.get("bypass_groups", [])
+            if "bypass_groups" in self.main_win.config: del self.main_win.config["bypass_groups"]
+
+        groups = self.main_win.config.get("rule_groups", [])
+
+        # Check if already exists
+        found = False
+        for g in groups:
+            if g.get("name") == "Iran Direct" or g.get("update_url") == IRAN_IP_URL:
+                g["name"] = "Iran Direct"
+                g["update_url"] = IRAN_IP_URL
+                g["mode"] = "direct"
+                g["enabled"] = True
+                found = True
+                break
+
+        if not found:
+            groups.append({
+                "name": "Iran Direct",
+                "enabled": True,
+                "mode": "direct",
+                "rules": [],
+                "update_url": IRAN_IP_URL
+            })
+
+        self.main_win.config["rule_groups"] = groups
+        self.main_win._save_config()
+        self.main_win.proxy_service.update_config(self.main_win.config)
+
+        # Trigger update if proxy is running
+        if self.main_win.proxy_service.is_running:
+            idx = len(groups) - 1
+            if found:
+                for i, g in enumerate(groups):
+                    if g.get("name") == "Iran Direct":
+                        idx = i
+                        break
+
+            async def do_update():
+                await self.main_win.proxy_service.update_bypass_group(idx)
+                self.main_win._save_config()
+                self.main_win.proxy_service.update_config(self.main_win.config)
+                logging.info("Iran IP list updated from subscription.")
+
+            import asyncio
+            asyncio.run_coroutine_threadsafe(do_update(), self.main_win.proxy_service.loop)
+
+        QMessageBox.information(self, "Success", "Iran Direct routing group added/updated. The IP list will be downloaded automatically.")
 
     def _export_config(self):
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Config", "config_preset.json", "JSON Files (*.json)")

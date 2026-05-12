@@ -170,6 +170,7 @@ class RoutingPage(QWidget):
             if host not in target_group["rules"]:
                 target_group["rules"].append(host)
                 self.main_win._save_config()
+                self.main_win.proxy_service.update_config(self.main_win.config)
                 self._refresh_routing_table()
                 logging.info(f"Added {host} to {group_name}")
 
@@ -204,6 +205,7 @@ class RoutingPage(QWidget):
                 "name": name, "enabled": True, "mode": edit_mode.currentText().lower(), "rules": [], "update_url": ""
             })
             self.main_win._save_config()
+            self.main_win.proxy_service.update_config(self.main_win.config)
             self._refresh_routing_table()
 
     def _toggle_group_enabled(self, index, state):
@@ -211,6 +213,7 @@ class RoutingPage(QWidget):
         if 0 <= index < len(groups):
             groups[index]["enabled"] = (state == Qt.CheckState.Checked.value)
             self.main_win._save_config()
+            self.main_win.proxy_service.update_config(self.main_win.config)
 
     def _edit_routing_ruleset(self, index):
         groups = self.main_win.config.get("rule_groups") or self.main_win.config.get("bypass_groups") or []
@@ -253,6 +256,7 @@ class RoutingPage(QWidget):
                     self.main_win.config["rule_groups"] = groups
                     del self.main_win.config["bypass_groups"]
                 self.main_win._save_config()
+                self.main_win.proxy_service.update_config(self.main_win.config)
                 self._refresh_routing_table()
 
     def _delete_routing_ruleset(self, index):
@@ -266,6 +270,7 @@ class RoutingPage(QWidget):
                     self.main_win.config["rule_groups"] = groups
                     del self.main_win.config["bypass_groups"]
                 self.main_win._save_config()
+                self.main_win.proxy_service.update_config(self.main_win.config)
                 self._refresh_routing_table()
 
     def _update_group_rules(self, index):
@@ -277,6 +282,7 @@ class RoutingPage(QWidget):
             success = await self.main_win.proxy_service.update_bypass_group(index)
             if success:
                 self.main_win._save_config()
+                self.main_win.proxy_service.update_config(self.main_win.config)
                 QTimer.singleShot(0, self._refresh_routing_table)
                 logging.info(f"Group {index} updated successfully.")
             else:
