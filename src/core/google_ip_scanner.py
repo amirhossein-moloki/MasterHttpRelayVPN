@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import ssl
+import socket
 import time
 from dataclasses import dataclass
 from typing import Optional
 
 from .constants import CANDIDATE_IPS, GOOGLE_SCANNER_TIMEOUT, GOOGLE_SCANNER_CONCURRENCY
+from .socket_utils import create_optimized_socket
 
 log = logging.getLogger("Scanner")
 
@@ -52,6 +54,7 @@ async def _probe_ip(
     """
     async with semaphore:
         start_time = time.time()
+        loop = asyncio.get_running_loop()
         try:
             # Create SSL context that skips certificate verification
             ctx = ssl.create_default_context()
@@ -59,10 +62,15 @@ async def _probe_ip(
             ctx.verify_mode = ssl.CERT_NONE
 
             # Connect to IP:443 with SNI set to the fronting domain
+            sock = create_optimized_socket(socket.AF_INET)
+            sock.setblocking(False)
+            await asyncio.wait_for(
+                loop.sock_connect(sock, (ip, 443)),
+                timeout=timeout,
+            )
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(
-                    ip,
-                    443,
+                    sock=sock,
                     ssl=ctx,
                     server_hostname=sni,
                 ),

@@ -94,16 +94,13 @@ FRONT_SNI_POOL_GOOGLE: tuple[str, ...] = (
     "mail.google.com",
     "accounts.google.com",
     "www.google.com",
-    # "drive.google.com",
-    # "docs.google.com",
-    # "calendar.google.com",
-    # "maps.google.com",
-    # "chat.google.com",
-    # "translate.google.com",
-    # "play.google.com",
-    # "lens.google.com",
-    # "scholar.google.com",
-    # "chromewebstore.google.com",
+    "translate.google.com",
+    "play.google.com",
+    "maps.google.com",
+    "drive.google.com",
+    "docs.google.com",
+    "calendar.google.com",
+    "chat.google.com",
 )
 
 

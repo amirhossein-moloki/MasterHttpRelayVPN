@@ -14,6 +14,7 @@ import ssl
 import time
 import ipaddress
 from core.adblock import load_all, refresh_all
+from core.socket_utils import create_optimized_socket
 
 try:
     import certifi
@@ -839,10 +840,13 @@ class ProxyServer:
 
         for family, ip in candidates:
             try:
-                return await asyncio.wait_for(
-                    asyncio.open_connection(ip, port, family=family or 0),
+                sock = create_optimized_socket(family or socket.AF_INET)
+                sock.setblocking(False)
+                await asyncio.wait_for(
+                    loop.sock_connect(sock, (ip, port)),
                     timeout=timeout,
                 )
+                return await asyncio.open_connection(sock=sock)
             except Exception as exc:
                 fam = "ipv4" if family == socket.AF_INET else (
                     "ipv6" if family == socket.AF_INET6 else "auto"
@@ -947,13 +951,16 @@ class ProxyServer:
             ssl_ctx_client.check_hostname = False
             ssl_ctx_client.verify_mode = ssl.CERT_NONE
         try:
-            r_out, w_out = await asyncio.wait_for(
-                asyncio.open_connection(
-                    target_ip, port,
-                    ssl=ssl_ctx_client,
-                    server_hostname=sni_out,
-                ),
+            sock = create_optimized_socket(socket.AF_INET)
+            sock.setblocking(False)
+            await asyncio.wait_for(
+                loop.sock_connect(sock, (target_ip, port)),
                 timeout=self._tcp_connect_timeout,
+            )
+            r_out, w_out = await asyncio.open_connection(
+                sock=sock,
+                ssl=ssl_ctx_client,
+                server_hostname=sni_out,
             )
         except Exception as e:
             log.error("SNI-rewrite outbound connect failed (%s via %s): %s",

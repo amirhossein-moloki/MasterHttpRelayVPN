@@ -18,6 +18,7 @@ import re
 import socket
 import ssl
 import statistics
+from core.socket_utils import apply_optimized_socket_options, create_optimized_socket
 import tempfile
 import time
 from urllib.parse import urlparse
@@ -361,15 +362,14 @@ class DomainFronter:
     async def _open(self):
         """Open a TLS connection to the CDN.
 
-        - TCP_NODELAY is set on the underlying socket so small H2/H1 writes
-          aren't held back by Nagle's algorithm (up to ~40 ms per batch).
+        - Socket optimizations are applied to reduce RTT and prevent
+          fragmentation (DPI bypass).
         - The *server_hostname* parameter sets the **TLS SNI** extension;
           we rotate across `self._sni_hosts` so DPI can't fingerprint
           "always www.google.com" from the client side.
         """
         loop = asyncio.get_running_loop()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock = create_optimized_socket(socket.AF_INET)
         sock.setblocking(False)
         try:
             await loop.sock_connect(sock, (self.connect_host, 443))
@@ -462,8 +462,7 @@ class DomainFronter:
             "Connection: close\r\n\r\n"
         ).encode() + payload
         loop = asyncio.get_running_loop()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock = create_optimized_socket(socket.AF_INET)
         sock.setblocking(False)
         started = time.perf_counter()
         reader = None
