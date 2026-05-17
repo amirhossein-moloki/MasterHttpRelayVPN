@@ -220,12 +220,20 @@ class DashboardPage(QWidget):
             blacklisted = stats.get("blacklisted_scripts", [])
             script_ids = self.main_win.config.get("script_ids") or self.main_win.config.get("script_id")
             if not isinstance(script_ids, list): script_ids = [script_ids] if script_ids else []
+
+            script_counts = usage.get("script_counts", {}) if usage else {}
+
             health_text = []
             for sid in script_ids:
                 short_id = sid[-8:] if len(sid) > 8 else sid
                 is_blacklisted = any(b['sid'] == sid[-12:] or b['sid'] == sid for b in blacklisted)
+                count = script_counts.get(sid, 0)
+                is_over_limit = count >= 20000
+
                 if is_blacklisted:
                     health_text.append(f"<span style='color: #e74c3c;'>✖ {short_id} (Failing)</span>")
+                elif is_over_limit:
+                    health_text.append(f"<span style='color: #f39c12;'>⚠ {short_id} (Limit Reached)</span>")
                 else:
                     health_text.append(f"<span style='color: #2ecc71;'>✔ {short_id} (Healthy)</span>")
             self.health_list.setText("<br>".join(health_text) if health_text else "No scripts configured")
