@@ -23,13 +23,40 @@ class UsageTracker:
         with self._lock:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            # Table for daily execution count (Apps Script quota)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS daily_quota (
-                    date TEXT PRIMARY KEY,
-                    count INTEGER DEFAULT 0
-                )
-            """)
+            # Migration: check if daily_quota has script_id
+            cursor.execute("PRAGMA table_info(daily_quota)")
+            columns = [info[1] for info in cursor.fetchall()]
+
+            if columns and "script_id" not in columns:
+                log.info("Migrating daily_quota table to include script_id")
+                # Rename old table
+                cursor.execute("ALTER TABLE daily_quota RENAME TO daily_quota_old")
+                # Create new table
+                cursor.execute("""
+                    CREATE TABLE daily_quota (
+                        date TEXT,
+                        script_id TEXT,
+                        count INTEGER DEFAULT 0,
+                        PRIMARY KEY (date, script_id)
+                    )
+                """)
+                # Copy data (assign 'default' to old records)
+                cursor.execute("""
+                    INSERT INTO daily_quota (date, script_id, count)
+                    SELECT date, 'default', count FROM daily_quota_old
+                """)
+                cursor.execute("DROP TABLE daily_quota_old")
+            else:
+                # Table for daily execution count (Apps Script quota)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_quota (
+                        date TEXT,
+                        script_id TEXT,
+                        count INTEGER DEFAULT 0,
+                        PRIMARY KEY (date, script_id)
+                    )
+                """)
+
             # Table for detailed traffic logs
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS traffic_logs (
@@ -57,11 +84,11 @@ class UsageTracker:
                 type, data = task
                 cursor = conn.cursor()
                 if type == "quota":
-                    today, count = data
+                    today, script_id, count = data
                     cursor.execute("""
-                        INSERT INTO daily_quota (date, count) VALUES (?, ?)
-                        ON CONFLICT(date) DO UPDATE SET count = count + ?
-                    """, (today, count, count))
+                        INSERT INTO daily_quota (date, script_id, count) VALUES (?, ?, ?)
+                        ON CONFLICT(date, script_id) DO UPDATE SET count = count + ?
+                    """, (today, script_id, count, count))
                 elif type == "traffic":
                     ts, host, sent, received = data
                     cursor.execute("""
@@ -94,29 +121,50 @@ class UsageTracker:
             return (reset_time - timedelta(days=1)).timestamp()
         return reset_time.timestamp()
 
-    def add_request(self, count=1):
+    def add_request(self, script_id, count=1):
         """Record Apps Script executions for quota tracking (Async)."""
         today = self._get_today_str()
-        self._queue.put(("quota", (today, count)))
+        self._queue.put(("quota", (today, script_id, count)))
 
     def add_traffic(self, host, bytes_sent, bytes_received):
         """Record detailed traffic log (Async)."""
         self._queue.put(("traffic", (time.time(), host, bytes_sent, bytes_received)))
 
-    def get_count(self):
-        """Get today's execution count (Sync - used for display/limit checks)."""
+    def get_count(self, script_id=None):
+        """Get today's execution count for a specific script or total (Sync)."""
         today = self._get_today_str()
         with self._lock:
             try:
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
-                cursor.execute("SELECT count FROM daily_quota WHERE date = ?", (today,))
-                row = cursor.fetchone()
-                conn.close()
-                return row[0] if row else 0
+                if script_id:
+                    cursor.execute("SELECT count FROM daily_quota WHERE date = ? AND script_id = ?", (today, script_id))
+                    row = cursor.fetchone()
+                    conn.close()
+                    return row[0] if row else 0
+                else:
+                    cursor.execute("SELECT SUM(count) FROM daily_quota WHERE date = ?", (today,))
+                    row = cursor.fetchone()
+                    conn.close()
+                    return row[0] if row else 0
             except Exception as e:
                 log.error(f"Error getting count from DB: {e}")
                 return 0
+
+    def get_script_counts(self):
+        """Get today's counts for all scripts."""
+        today = self._get_today_str()
+        with self._lock:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT script_id, count FROM daily_quota WHERE date = ?", (today,))
+                rows = cursor.fetchall()
+                conn.close()
+                return {r[0]: r[1] for r in rows}
+            except Exception as e:
+                log.error(f"Error getting script counts from DB: {e}")
+                return {}
 
     def set_limit(self, limit):
         with self._lock:
@@ -127,6 +175,9 @@ class UsageTracker:
 
     def is_over_limit(self):
         return self.get_count() >= self.limit
+
+    def is_script_over_limit(self, script_id, limit=20000):
+        return self.get_count(script_id) >= limit
 
     def get_top_hosts(self, limit=10, days=1):
         """Get top hosts by total traffic. If days=1, shows data since 10:30 AM today."""

@@ -273,7 +273,7 @@ class DomainFronter:
         """Record consumed Apps Script executions."""
         if not sid or count <= 0:
             return
-        self._usage_tracker.add_request(count)
+        self._usage_tracker.add_request(sid, count)
         self._exec_total = self._usage_tracker.get_count()
 
     async def _execution_logger(self):
@@ -555,16 +555,23 @@ class DomainFronter:
         """Round-robin across script IDs for load distribution.
 
         Skips script IDs currently in the short-term blacklist (failing
-        or slow) unless *all* are blacklisted, in which case we fall back
-        to plain round-robin so traffic can still flow.
+        or slow) or those that reached their daily quota, unless *all*
+        are unavailable, in which case we fall back to plain round-robin.
         """
         n = len(self._script_ids)
         for _ in range(n):
             sid = self._script_ids[self._script_idx % n]
             self._script_idx += 1
+            if not self._is_sid_blacklisted(sid) and not self._is_sid_over_limit(sid):
+                return sid
+        # All unavailable (blacklisted or over limit) — fall back to the first non-blacklisted
+        for _ in range(n):
+            sid = self._script_ids[self._script_idx % n]
+            self._script_idx += 1
             if not self._is_sid_blacklisted(sid):
                 return sid
-        # All blacklisted — clear expired entries and fall back.
+
+        # Truly all blacklisted — clear expired entries and fall back.
         self._prune_blacklist(force=True)
         sid = self._script_ids[self._script_idx % n]
         self._script_idx += 1
@@ -577,6 +584,9 @@ class DomainFronter:
         if until:
             self._sid_blacklist.pop(sid, None)
         return False
+
+    def _is_sid_over_limit(self, sid: str) -> bool:
+        return self._usage_tracker.is_script_over_limit(sid, limit=20000)
 
     def _blacklist_sid(self, sid: str, reason: str = "") -> None:
         """Blacklist a script ID for SCRIPT_BLACKLIST_TTL seconds."""
@@ -595,7 +605,7 @@ class DomainFronter:
                 self._sid_blacklist.pop(sid, None)
 
     def _pick_fanout_sids(self, key: str | None) -> list[str]:
-        """Pick up to `parallel_relay` distinct non-blacklisted script IDs.
+        """Pick up to `parallel_relay` distinct healthy script IDs.
 
         The first ID is the stable per-host choice (same as single-shot
         routing); the rest are filled from the remaining pool. This keeps
@@ -607,7 +617,12 @@ class DomainFronter:
         primary = self._script_id_for_key(key)
         picked = [primary]
         others = [s for s in self._script_ids
-                  if s != primary and not self._is_sid_blacklisted(s)]
+                  if s != primary and not self._is_sid_blacklisted(s) and not self._is_sid_over_limit(s)]
+
+        # If others is empty because of quota limits, retry without quota check
+        if not others and len(self._script_ids) > 1:
+            others = [s for s in self._script_ids if s != primary and not self._is_sid_blacklisted(s)]
+
         # Round-robin-ish selection from `others`
         for sid in others:
             if len(picked) >= self._parallel_relay:
@@ -788,8 +803,8 @@ class DomainFronter:
         changes. If no key is available, we keep the older round-robin fallback
         so warmup/keepalive traffic still distributes normally.
 
-        Blacklisted IDs are skipped by probing forward in the list until a
-        healthy one is found; if none, the stable pick is returned anyway.
+        Blacklisted IDs or those over limit are skipped by probing forward
+        in the list until a healthy one is found; if none, the stable pick is returned.
         """
         if len(self._script_ids) == 1:
             return self._script_ids[0]
@@ -798,10 +813,19 @@ class DomainFronter:
         digest = hashlib.sha1(key.encode("utf-8")).digest()
         base = int.from_bytes(digest[:4], "big") % len(self._script_ids)
         n = len(self._script_ids)
+
+        # 1. Try to find one that is neither blacklisted nor over limit
+        for offset in range(n):
+            sid = self._script_ids[(base + offset) % n]
+            if not self._is_sid_blacklisted(sid) and not self._is_sid_over_limit(sid):
+                return sid
+
+        # 2. Try to find one that is just not blacklisted (ignore quota)
         for offset in range(n):
             sid = self._script_ids[(base + offset) % n]
             if not self._is_sid_blacklisted(sid):
                 return sid
+
         return self._script_ids[base]
 
     def _exec_path(self, url_or_host: str | None = None) -> str:
@@ -831,8 +855,12 @@ class DomainFronter:
         self.auth_key = config.get("auth_key", self.auth_key)
         self.connect_host = config.get("google_ip", self.connect_host)
 
-        log.info("Relay config updated: %d script(s), parallel=%d",
-                 len(self._script_ids), self._parallel_relay)
+        if self._usage_tracker:
+            total_limit = 20000 * len(self._script_ids)
+            self._usage_tracker.set_limit(total_limit)
+
+        log.info("Relay config updated: %d script(s), parallel=%d, total_limit=%d",
+                 len(self._script_ids), self._parallel_relay, 20000 * len(self._script_ids))
 
     async def _flush_pool(self):
         """Close all pooled connections (they may be stale after errors)."""

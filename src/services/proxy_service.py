@@ -111,7 +111,8 @@ class ProxyService(QObject):
             "remaining": tracker.get_remaining(),
             "percent": (tracker.get_count() / tracker.limit) * 100 if tracker.limit > 0 else 0,
             "top_hosts": tracker.get_top_hosts(limit=10, days=days),
-            "history": tracker.get_history(days=7 if days <= 7 else days)
+            "history": tracker.get_history(days=7 if days <= 7 else days),
+            "script_counts": tracker.get_script_counts()
         }
 
     def get_total_usage(self):
