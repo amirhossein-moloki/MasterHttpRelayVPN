@@ -141,12 +141,12 @@ class UsageTracker:
                     cursor.execute("SELECT count FROM daily_quota WHERE date = ? AND script_id = ?", (today, script_id))
                     row = cursor.fetchone()
                     conn.close()
-                    return row[0] if row else 0
+                    return (row[0] or 0) if row else 0
                 else:
                     cursor.execute("SELECT SUM(count) FROM daily_quota WHERE date = ?", (today,))
                     row = cursor.fetchone()
                     conn.close()
-                    return row[0] if row else 0
+                    return (row[0] or 0) if row else 0
             except Exception as e:
                 log.error(f"Error getting count from DB: {e}")
                 return 0
