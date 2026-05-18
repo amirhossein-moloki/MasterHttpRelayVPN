@@ -128,6 +128,7 @@ class DomainFronter:
         self._parallel_relay = max(1, min(self._parallel_relay,
                                           len(self._script_ids)))
         self._sid_blacklist: dict[str, float] = {}
+        self._sid_strikes: dict[str, int] = {}
         self._blacklist_ttl = SCRIPT_BLACKLIST_TTL
 
         # Per-host stats (requests, cache hits, bytes, cumulative latency).
@@ -597,6 +598,33 @@ class DomainFronter:
                     sid[-8:] if len(sid) > 8 else sid,
                     int(self._blacklist_ttl),
                     f" ({reason})" if reason else "")
+
+    def _record_sid_perf(self, sid: str, elapsed: float, success: bool) -> None:
+        """Track performance strikes for a script ID.
+
+        Consecutive failures or slow responses (>15s) trigger a blacklist.
+        A fast successful response (<10s) resets the strike counter.
+        """
+        if not sid or len(self._script_ids) <= 1:
+            return
+
+        # Configurable thresholds
+        SLOW_THRESHOLD = 15.0
+        FAST_THRESHOLD = 10.0
+        STRIKE_LIMIT = 3
+
+        is_slow = elapsed > SLOW_THRESHOLD
+        is_fast = success and elapsed < FAST_THRESHOLD
+
+        if not success or is_slow:
+            strikes = self._sid_strikes.get(sid, 0) + 1
+            self._sid_strikes[sid] = strikes
+            if strikes >= STRIKE_LIMIT:
+                reason = "timeout/error" if not success else f"consistently slow ({elapsed:.1f}s)"
+                self._blacklist_sid(sid, reason=reason)
+                self._sid_strikes[sid] = 0
+        elif is_fast:
+            self._sid_strikes[sid] = 0
 
     def _prune_blacklist(self, force: bool = False) -> None:
         now = time.time()
@@ -2289,8 +2317,8 @@ class DomainFronter:
                     if exc is None:
                         winner_result = t.result()
                         return winner_result
-                    # This racer failed — blacklist and keep waiting for others
-                    self._blacklist_sid(sid, reason=type(exc).__name__)
+                    # This racer failed — strikes are already recorded by
+                    # _relay_single_h2_with_sid's internal tracking.
                     winner_exc = exc
             # All racers failed
             if winner_exc is not None:
@@ -2309,21 +2337,29 @@ class DomainFronter:
         Uses the shared H2 connection — no pool checkout needed.
         Many concurrent calls all share one TLS connection.
         """
-        full_payload = dict(payload)
-        full_payload["k"] = self.auth_key
-        json_body = json.dumps(full_payload).encode()
-
         sid = self._script_id_for_key(self._host_key(payload.get("u")))
-        path = self._exec_path_for_sid(sid)
-        self._record_execution(sid)
+        t0 = time.perf_counter()
+        try:
+            full_payload = dict(payload)
+            full_payload["k"] = self.auth_key
+            json_body = json.dumps(full_payload).encode()
 
-        status, headers, body = await self._h2.request(
-            method="POST", path=path, host=self.http_host,
-            headers={"content-type": "application/json"},
-            body=json_body,
-        )
+            path = self._exec_path_for_sid(sid)
+            self._record_execution(sid)
 
-        return parse_relay_response(body, self._max_response_body_bytes)
+            status, headers, body = await self._h2.request(
+                method="POST", path=path, host=self.http_host,
+                headers={"content-type": "application/json"},
+                body=json_body,
+            )
+            res = parse_relay_response(body, self._max_response_body_bytes)
+            self._record_sid_perf(sid, time.perf_counter() - t0, True)
+            return res
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._record_sid_perf(sid, time.perf_counter() - t0, False)
+            raise
 
     async def _relay_single_h2_with_sid(self, payload: dict,
                                         sid: str) -> bytes:
@@ -2332,120 +2368,42 @@ class DomainFronter:
         Used by `_relay_fanout` to race multiple script IDs in parallel.
         Mirrors `_relay_single_h2` but ignores the stable-hash routing.
         """
-        full_payload = dict(payload)
-        full_payload["k"] = self.auth_key
-        json_body = json.dumps(full_payload).encode()
+        t0 = time.perf_counter()
+        try:
+            full_payload = dict(payload)
+            full_payload["k"] = self.auth_key
+            json_body = json.dumps(full_payload).encode()
 
-        path = self._exec_path_for_sid(sid)
-        self._record_execution(sid)
+            path = self._exec_path_for_sid(sid)
+            self._record_execution(sid)
 
-        status, headers, body = await self._h2.request(
-            method="POST", path=path, host=self.http_host,
-            headers={"content-type": "application/json"},
-            body=json_body,
-        )
-
-        return parse_relay_response(body, self._max_response_body_bytes)
+            status, headers, body = await self._h2.request(
+                method="POST", path=path, host=self.http_host,
+                headers={"content-type": "application/json"},
+                body=json_body,
+            )
+            res = parse_relay_response(body, self._max_response_body_bytes)
+            self._record_sid_perf(sid, time.perf_counter() - t0, True)
+            return res
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._record_sid_perf(sid, time.perf_counter() - t0, False)
+            raise
 
     async def _relay_single(self, payload: dict) -> bytes:
         """Execute a single relay POST → redirect → parse."""
-        # Add auth key
-        full_payload = dict(payload)
-        full_payload["k"] = self.auth_key
-        json_body = json.dumps(full_payload).encode()
-
         sid = self._script_id_for_key(self._host_key(payload.get("u")))
-        path = self._exec_path_for_sid(sid)
-        reader, writer, created = await self._acquire()
-
+        t0 = time.perf_counter()
         try:
-            request = (
-                f"POST {path} HTTP/1.1\r\n"
-                f"Host: {self.http_host}\r\n"
-                f"Content-Type: application/json\r\n"
-                f"Content-Length: {len(json_body)}\r\n"
-                f"Accept-Encoding: gzip\r\n"
-                f"Connection: keep-alive\r\n"
-                f"\r\n"
-            )
-            writer.write(request.encode() + json_body)
-            await writer.drain()
-            self._record_execution(sid)
+            # Add auth key
+            full_payload = dict(payload)
+            full_payload["k"] = self.auth_key
+            json_body = json.dumps(full_payload).encode()
 
-            status, resp_headers, resp_body = await read_http_response(reader, max_bytes=self._max_response_body_bytes)
-
-            # Follow redirect chain on the SAME connection
-            for _ in range(5):
-                if status not in (301, 302, 303, 307, 308):
-                    break
-                location = resp_headers.get("location")
-                if not location:
-                    break
-
-                parsed = urlparse(location)
-                rpath = parsed.path + ("?" + parsed.query if parsed.query else "")
-                if status in (307, 308):
-                    redirect_method = "POST"
-                    redirect_body = json_body
-                else:
-                    redirect_method = "GET"
-                    redirect_body = b""
-                request_lines = [
-                    f"{redirect_method} {rpath} HTTP/1.1",
-                    f"Host: {parsed.netloc}",
-                    "Accept-Encoding: gzip",
-                    "Connection: keep-alive",
-                ]
-                if redirect_body:
-                    request_lines.append(f"Content-Length: {len(redirect_body)}")
-                request = "\r\n".join(request_lines) + "\r\n\r\n"
-                writer.write(request.encode() + redirect_body)
-                await writer.drain()
-                status, resp_headers, resp_body = await read_http_response(reader, max_bytes=self._max_response_body_bytes)
-
-            await self._release(reader, writer, created)
-            return parse_relay_response(resp_body, self._max_response_body_bytes)
-
-        except Exception:
-            try:
-                writer.close()
-            except Exception:
-                pass
-            raise
-
-    async def _relay_batch(self, payloads: list[dict]) -> list[bytes]:
-        """Send multiple requests in one POST using Apps Script fetchAll."""
-        batch_payload = {
-            "k": self.auth_key,
-            "q": payloads,
-        }
-        json_body = json.dumps(batch_payload).encode()
-        sid = self._script_id_for_key(
-            self._host_key(payloads[0].get("u") if payloads else None)
-        )
-        path = self._exec_path_for_sid(sid)
-
-        # Try HTTP/2 first
-        if self._h2_available():
-            try:
-                self._record_execution(sid)
-                status, headers, body = await asyncio.wait_for(
-                    self._h2.request(
-                        method="POST", path=path, host=self.http_host,
-                        headers={"content-type": "application/json"},
-                        body=json_body,
-                    ),
-                    timeout=30,
-                )
-                self._record_h2_success()
-                return self._parse_batch_body(body, payloads)
-            except Exception as e:
-                self._record_h2_failure(e)
-                log.debug("H2 batch failed (%s), falling back to H1", e)
-
-        # HTTP/1.1 fallback
-        async with self._semaphore:
+            path = self._exec_path_for_sid(sid)
             reader, writer, created = await self._acquire()
+
             try:
                 request = (
                     f"POST {path} HTTP/1.1\r\n"
@@ -2462,13 +2420,14 @@ class DomainFronter:
 
                 status, resp_headers, resp_body = await read_http_response(reader, max_bytes=self._max_response_body_bytes)
 
-                # Follow redirects
+                # Follow redirect chain on the SAME connection
                 for _ in range(5):
                     if status not in (301, 302, 303, 307, 308):
                         break
                     location = resp_headers.get("location")
                     if not location:
                         break
+
                     parsed = urlparse(location)
                     rpath = parsed.path + ("?" + parsed.query if parsed.query else "")
                     if status in (307, 308):
@@ -2491,15 +2450,124 @@ class DomainFronter:
                     status, resp_headers, resp_body = await read_http_response(reader, max_bytes=self._max_response_body_bytes)
 
                 await self._release(reader, writer, created)
+                res = parse_relay_response(resp_body, self._max_response_body_bytes)
+                self._record_sid_perf(sid, time.perf_counter() - t0, True)
+                return res
 
-            except Exception:
+            except (asyncio.CancelledError, Exception):
                 try:
                     writer.close()
                 except Exception:
                     pass
                 raise
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # outer catch to ensure sid perf is recorded even if _acquire or inner fails
+            self._record_sid_perf(sid, time.perf_counter() - t0, False)
+            raise
 
-        return self._parse_batch_body(resp_body, payloads)
+    async def _relay_batch(self, payloads: list[dict]) -> list[bytes]:
+        """Send multiple requests in one POST using Apps Script fetchAll."""
+        sid = self._script_id_for_key(
+            self._host_key(payloads[0].get("u") if payloads else None)
+        )
+        t0 = time.perf_counter()
+        try:
+            batch_payload = {
+                "k": self.auth_key,
+                "q": payloads,
+            }
+            json_body = json.dumps(batch_payload).encode()
+            path = self._exec_path_for_sid(sid)
+
+            # Try HTTP/2 first
+            if self._h2_available():
+                try:
+                    self._record_execution(sid)
+                    status, headers, body = await asyncio.wait_for(
+                        self._h2.request(
+                            method="POST", path=path, host=self.http_host,
+                            headers={"content-type": "application/json"},
+                            body=json_body,
+                        ),
+                        timeout=30,
+                    )
+                    self._record_h2_success()
+                    res = self._parse_batch_body(body, payloads)
+                    self._record_sid_perf(sid, time.perf_counter() - t0, True)
+                    return res
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    self._record_h2_failure(e)
+                    log.debug("H2 batch failed (%s), falling back to H1", e)
+
+            # HTTP/1.1 fallback
+            async with self._semaphore:
+                reader, writer, created = await self._acquire()
+                try:
+                    request = (
+                        f"POST {path} HTTP/1.1\r\n"
+                        f"Host: {self.http_host}\r\n"
+                        f"Content-Type: application/json\r\n"
+                        f"Content-Length: {len(json_body)}\r\n"
+                        f"Accept-Encoding: gzip\r\n"
+                        f"Connection: keep-alive\r\n"
+                        f"\r\n"
+                    )
+                    writer.write(request.encode() + json_body)
+                    await writer.drain()
+                    self._record_execution(sid)
+
+                    status, resp_headers, resp_body = await read_http_response(reader, max_bytes=self._max_response_body_bytes)
+
+                    # Follow redirects
+                    for _ in range(5):
+                        if status not in (301, 302, 303, 307, 308):
+                            break
+                        location = resp_headers.get("location")
+                        if not location:
+                            break
+                        parsed = urlparse(location)
+                        rpath = parsed.path + ("?" + parsed.query if parsed.query else "")
+                        if status in (307, 308):
+                            redirect_method = "POST"
+                            redirect_body = json_body
+                        else:
+                            redirect_method = "GET"
+                            redirect_body = b""
+                        request_lines = [
+                            f"{redirect_method} {rpath} HTTP/1.1",
+                            f"Host: {parsed.netloc}",
+                            "Accept-Encoding: gzip",
+                            "Connection: keep-alive",
+                        ]
+                        if redirect_body:
+                            request_lines.append(f"Content-Length: {len(redirect_body)}")
+                        request = "\r\n".join(request_lines) + "\r\n\r\n"
+                        writer.write(request.encode() + redirect_body)
+                        await writer.drain()
+                        status, resp_headers, resp_body = await read_http_response(reader, max_bytes=self._max_response_body_bytes)
+
+                    await self._release(reader, writer, created)
+                    res = self._parse_batch_body(resp_body, payloads)
+                    self._record_sid_perf(sid, time.perf_counter() - t0, True)
+                    return res
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    try:
+                        writer.close()
+                    except Exception:
+                        pass
+                    raise
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._record_sid_perf(sid, time.perf_counter() - t0, False)
+            raise
 
     def _parse_batch_body(self, resp_body: bytes,
                           payloads: list[dict]) -> list[bytes]:
