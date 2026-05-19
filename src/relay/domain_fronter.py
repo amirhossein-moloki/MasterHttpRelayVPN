@@ -63,6 +63,7 @@ from .relay_response import (
     classify_relay_error,
     error_response,
     extract_apps_script_user_html,
+    get_relay_error_category,
     load_relay_json,
     parse_relay_json,
     parse_relay_response,
@@ -128,6 +129,7 @@ class DomainFronter:
         self._parallel_relay = max(1, min(self._parallel_relay,
                                           len(self._script_ids)))
         self._sid_blacklist: dict[str, float] = {}
+        self._sid_host_blacklist: dict[tuple[str, str], float] = {}
         self._sid_strikes: dict[str, int] = {}
         self._blacklist_ttl = SCRIPT_BLACKLIST_TTL
 
@@ -552,7 +554,7 @@ class DomainFronter:
                 except Exception:
                     pass
 
-    def _next_script_id(self) -> str:
+    def _next_script_id(self, host_key: str | None = None) -> str:
         """Round-robin across script IDs for load distribution.
 
         Skips script IDs currently in the short-term blacklist (failing
@@ -563,13 +565,13 @@ class DomainFronter:
         for _ in range(n):
             sid = self._script_ids[self._script_idx % n]
             self._script_idx += 1
-            if not self._is_sid_blacklisted(sid) and not self._is_sid_over_limit(sid):
+            if not self._is_sid_blacklisted(sid, host_key) and not self._is_sid_over_limit(sid):
                 return sid
         # All unavailable (blacklisted or over limit) — fall back to the first non-blacklisted
         for _ in range(n):
             sid = self._script_ids[self._script_idx % n]
             self._script_idx += 1
-            if not self._is_sid_blacklisted(sid):
+            if not self._is_sid_blacklisted(sid, host_key):
                 return sid
 
         # Truly all blacklisted — clear expired entries and fall back.
@@ -578,37 +580,84 @@ class DomainFronter:
         self._script_idx += 1
         return sid
 
-    def _is_sid_blacklisted(self, sid: str) -> bool:
+    def _is_sid_blacklisted(self, sid: str, host_key: str | None = None) -> bool:
+        now = time.time()
+        # 1. Global blacklist
         until = self._sid_blacklist.get(sid, 0.0)
-        if until and until > time.time():
+        if until and until > now:
             return True
         if until:
             self._sid_blacklist.pop(sid, None)
+
+        # 2. Host-specific blacklist
+        if host_key:
+            until = self._sid_host_blacklist.get((sid, host_key), 0.0)
+            if until and until > now:
+                return True
+            if until:
+                self._sid_host_blacklist.pop((sid, host_key), None)
+
         return False
 
     def _is_sid_over_limit(self, sid: str) -> bool:
         return self._usage_tracker.is_script_over_limit(sid, limit=20000)
 
-    def _blacklist_sid(self, sid: str, reason: str = "") -> None:
-        """Blacklist a script ID for SCRIPT_BLACKLIST_TTL seconds."""
+    def _blacklist_sid(self, sid: str, reason: str = "", host_key: str | None = None) -> None:
+        """Blacklist a script ID globally or for a specific host."""
         if len(self._script_ids) <= 1:
-            return  # Nothing to fall back to — blacklist would be pointless.
-        self._sid_blacklist[sid] = time.time() + self._blacklist_ttl
-        log.warning("Blacklisted script %s for %ds%s",
-                    sid[-8:] if len(sid) > 8 else sid,
-                    int(self._blacklist_ttl),
-                    f" ({reason})" if reason else "")
+            return
 
-    def _record_sid_perf(self, sid: str, elapsed: float, success: bool) -> None:
+        now = time.time()
+        short_sid = sid[-8:] if len(sid) > 8 else sid
+
+        if host_key:
+            self._sid_host_blacklist[(sid, host_key)] = now + self._blacklist_ttl
+            log.warning("Blacklisted script %s for host %s for %ds%s",
+                        short_sid, host_key, int(self._blacklist_ttl),
+                        f" ({reason})" if reason else "")
+        else:
+            self._sid_blacklist[sid] = now + self._blacklist_ttl
+            log.warning("Blacklisted script %s for %ds%s",
+                        short_sid, int(self._blacklist_ttl),
+                        f" ({reason})" if reason else "")
+
+    def _record_sid_perf(self, sid: str, elapsed: float, success: bool,
+                        host_key: str | None = None,
+                        resp_body: bytes | None = None) -> None:
         """Track performance strikes for a script ID.
 
         Consecutive failures or slow responses (>15s) trigger a blacklist.
         A fast successful response (<10s) resets the strike counter.
+        Also handles immediate host-specific blacklisting for rate limits.
         """
         if not sid or len(self._script_ids) <= 1:
             return
 
-        # Configurable thresholds
+        # 1. Immediate Logic (Rate Limits / Admin Block / Global Quota)
+        if resp_body:
+            try:
+                text = resp_body.decode(errors="replace").strip()
+                # Check for Apps Script level errors
+                data = load_relay_json(text)
+                if data:
+                    if "e" in data:
+                        err_raw = str(data["e"])
+                        cat = get_relay_error_category(err_raw)
+                        if cat in ("admin", "quota"):
+                            low = err_raw.lower()
+                            if "daily" in low or "one day" in low or "quota exceeded" in low:
+                                self._blacklist_sid(sid, reason="daily quota exceeded")
+                            elif host_key:
+                                self._blacklist_sid(sid, reason=f"host limit ({cat})", host_key=host_key)
+                            return # Avoid double-striking
+                    # Check for origin level rate limits (429)
+                    if host_key and data.get("s") == 429:
+                        self._blacklist_sid(sid, reason="origin rate limit (429)", host_key=host_key)
+                        return
+            except Exception:
+                pass
+
+        # 2. Strike-based logic for slowness/network errors
         SLOW_THRESHOLD = 15.0
         FAST_THRESHOLD = 10.0
         STRIKE_LIMIT = 3
@@ -633,6 +682,9 @@ class DomainFronter:
         for sid, until in list(self._sid_blacklist.items()):
             if force or until <= now:
                 self._sid_blacklist.pop(sid, None)
+        for (sid, host), until in list(self._sid_host_blacklist.items()):
+            if force or until <= now:
+                self._sid_host_blacklist.pop((sid, host), None)
 
     def _pick_fanout_sids(self, key: str | None) -> list[str]:
         """Pick up to `parallel_relay` distinct healthy script IDs.
@@ -847,13 +899,13 @@ class DomainFronter:
         # 1. Try to find one that is neither blacklisted nor over limit
         for offset in range(n):
             sid = self._script_ids[(base + offset) % n]
-            if not self._is_sid_blacklisted(sid) and not self._is_sid_over_limit(sid):
+            if not self._is_sid_blacklisted(sid, key) and not self._is_sid_over_limit(sid):
                 return sid
 
         # 2. Try to find one that is just not blacklisted (ignore quota)
         for offset in range(n):
             sid = self._script_ids[(base + offset) % n]
-            if not self._is_sid_blacklisted(sid):
+            if not self._is_sid_blacklisted(sid, key):
                 return sid
 
         return self._script_ids[base]
@@ -2355,12 +2407,14 @@ class DomainFronter:
                 body=json_body,
             )
             res = parse_relay_response(body, self._max_response_body_bytes)
-            self._record_sid_perf(sid, time.perf_counter() - t0, True)
+            self._record_sid_perf(sid, time.perf_counter() - t0, True,
+                                 host_key=self._host_key(payload.get("u")), resp_body=body)
             return res
         except asyncio.CancelledError:
             raise
         except Exception:
-            self._record_sid_perf(sid, time.perf_counter() - t0, False)
+            self._record_sid_perf(sid, time.perf_counter() - t0, False,
+                                 host_key=self._host_key(payload.get("u")))
             raise
 
     async def _relay_single_h2_with_sid(self, payload: dict,
@@ -2385,12 +2439,14 @@ class DomainFronter:
                 body=json_body,
             )
             res = parse_relay_response(body, self._max_response_body_bytes)
-            self._record_sid_perf(sid, time.perf_counter() - t0, True)
+            self._record_sid_perf(sid, time.perf_counter() - t0, True,
+                                 host_key=self._host_key(payload.get("u")), resp_body=body)
             return res
         except asyncio.CancelledError:
             raise
         except Exception:
-            self._record_sid_perf(sid, time.perf_counter() - t0, False)
+            self._record_sid_perf(sid, time.perf_counter() - t0, False,
+                                 host_key=self._host_key(payload.get("u")))
             raise
 
     async def _relay_single(self, payload: dict) -> bytes:
@@ -2453,7 +2509,8 @@ class DomainFronter:
 
                 await self._release(reader, writer, created)
                 res = parse_relay_response(resp_body, self._max_response_body_bytes)
-                self._record_sid_perf(sid, time.perf_counter() - t0, True)
+                self._record_sid_perf(sid, time.perf_counter() - t0, True,
+                                     host_key=self._host_key(payload.get("u")), resp_body=resp_body)
                 return res
 
             except (asyncio.CancelledError, Exception):
@@ -2466,7 +2523,8 @@ class DomainFronter:
             raise
         except Exception:
             # outer catch to ensure sid perf is recorded even if _acquire or inner fails
-            self._record_sid_perf(sid, time.perf_counter() - t0, False)
+            self._record_sid_perf(sid, time.perf_counter() - t0, False,
+                                 host_key=self._host_key(payload.get("u")))
             raise
 
     async def _relay_batch(self, payloads: list[dict]) -> list[bytes]:
@@ -2497,7 +2555,7 @@ class DomainFronter:
                     )
                     self._record_h2_success()
                     res = self._parse_batch_body(body, payloads)
-                    self._record_sid_perf(sid, time.perf_counter() - t0, True)
+                    self._record_sid_perf(sid, time.perf_counter() - t0, True, resp_body=body)
                     return res
                 except asyncio.CancelledError:
                     raise
@@ -2554,7 +2612,7 @@ class DomainFronter:
 
                     await self._release(reader, writer, created)
                     res = self._parse_batch_body(resp_body, payloads)
-                    self._record_sid_perf(sid, time.perf_counter() - t0, True)
+                    self._record_sid_perf(sid, time.perf_counter() - t0, True, resp_body=resp_body)
                     return res
 
                 except asyncio.CancelledError:
