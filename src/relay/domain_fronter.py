@@ -619,6 +619,8 @@ class DomainFronter:
         if not success or is_slow:
             strikes = self._sid_strikes.get(sid, 0) + 1
             self._sid_strikes[sid] = strikes
+            log.debug("Strike %d/%d for script %s (success=%s, elapsed=%.1fs)",
+                      strikes, STRIKE_LIMIT, sid[-8:], success, elapsed)
             if strikes >= STRIKE_LIMIT:
                 reason = "timeout/error" if not success else f"consistently slow ({elapsed:.1f}s)"
                 self._blacklist_sid(sid, reason=reason)
