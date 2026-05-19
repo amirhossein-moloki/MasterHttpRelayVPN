@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -77,6 +78,39 @@ class TestFronterPerf(unittest.IsolatedAsyncioTestCase):
                 except:
                     pass
                 self.assertEqual(self.fronter._sid_strikes.get(sid, 0), 1)
+
+    async def test_host_specific_blacklist_429(self):
+        sid = "sid1"
+        host = "limit.com"
+        # Simulate a 429 response from origin
+        resp_body = json.dumps({"s": 429, "h": {}, "b": ""}).encode()
+        self.fronter._record_sid_perf(sid, 1.0, True, host_key=host, resp_body=resp_body)
+
+        # Should be blacklisted for this host but NOT globally
+        self.assertTrue(self.fronter._is_sid_blacklisted(sid, host))
+        self.assertFalse(self.fronter._is_sid_blacklisted(sid, "other.com"))
+        self.assertFalse(self.fronter._is_sid_blacklisted(sid))
+
+    async def test_host_specific_blacklist_admin(self):
+        sid = "sid1"
+        host = "admin-blocked.com"
+        # Simulate Apps Script admin block
+        resp_body = json.dumps({"e": "UrlFetch calls to admin-blocked.com are not permitted by your admin"}).encode()
+        self.fronter._record_sid_perf(sid, 1.0, True, host_key=host, resp_body=resp_body)
+
+        self.assertTrue(self.fronter._is_sid_blacklisted(sid, host))
+        self.assertFalse(self.fronter._is_sid_blacklisted(sid, "other.com"))
+
+    async def test_global_blacklist_daily_quota(self):
+        sid = "sid1"
+        host = "any.com"
+        # Simulate Apps Script daily quota error
+        resp_body = json.dumps({"e": "Service invoked too many times for one day: urlfetch."}).encode()
+        self.fronter._record_sid_perf(sid, 1.0, True, host_key=host, resp_body=resp_body)
+
+        # Should be blacklisted GLOBALLY
+        self.assertTrue(self.fronter._is_sid_blacklisted(sid))
+        self.assertTrue(self.fronter._is_sid_blacklisted(sid, "other.com"))
 
 if __name__ == "__main__":
     unittest.main()

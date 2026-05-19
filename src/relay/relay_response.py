@@ -162,6 +162,22 @@ def classify_relay_error(raw: str) -> str:
     return f"Relay error from Apps Script: {cleaned or raw}"
 
 
+def get_relay_error_category(raw: str) -> str:
+    """Classify the error into a coarse category for routing decisions."""
+    lower = raw.lower()
+    if any(p in lower for p in _QUOTA_PATTERNS):
+        return "quota"
+    if any(p in lower for p in _AUTH_PATTERNS):
+        return "auth"
+    if any(p in lower for p in _DEPLOY_PATTERNS):
+        return "deploy"
+    if any(p in lower for p in _TRANSIENT_PATTERNS):
+        return "transient"
+    if any(p in lower for p in _ADMIN_PATTERNS):
+        return "admin"
+    return "unknown"
+
+
 # ── Low-level HTTP helpers ────────────────────────────────────────────────────
 
 def error_response(status: int, message: str) -> bytes:
